@@ -16,6 +16,19 @@ import { readRotationState } from '../src/rotationState.js';
 import { login, logout, readFile, readJson, sandbox } from './helpers.js';
 
 const posix = process.platform !== 'win32';
+
+/**
+ * On macOS the credential backend is the login Keychain, not a file under the
+ * config dir, so the sandbox cannot stand in for it — `readCredentials` would
+ * miss and `writeCredentials` would touch the real Keychain. Everything that
+ * moves a token is skipped there; what remains covers the index and the guards.
+ */
+const needsFileBackend = {
+  skip:
+    process.platform === 'darwin' &&
+    'the credential backend is the Keychain on macOS; the sandbox cannot replace it',
+};
+
 let box;
 let paths;
 
@@ -61,7 +74,7 @@ test('listAccounts is empty when the store does not exist yet', () => {
   assert.deepEqual(listAccounts(paths), []);
 });
 
-test('save writes the three snapshot files and indexes the account', () => {
+test('save writes the three snapshot files and indexes the account', needsFileBackend, () => {
   login(paths, 'work@example.com');
 
   const { name } = saveAccount(paths, 'work');
@@ -80,7 +93,7 @@ test('save writes the three snapshot files and indexes the account', () => {
   assert.ok(Date.parse(meta.savedAt));
 });
 
-test('the credential blob is copied verbatim, never parsed', () => {
+test('the credential blob is copied verbatim, never parsed', needsFileBackend, () => {
   const blob = '{"unknownFutureField":1,\n  "email":"work@example.com"}';
   fs.writeFileSync(paths.credentialsFile, blob);
   fs.writeFileSync(paths.configJson, JSON.stringify({ oauthAccount: { emailAddress: 'x' } }));
@@ -90,7 +103,7 @@ test('the credential blob is copied verbatim, never parsed', () => {
   assert.equal(readFile(path.join(snapshotDir('work'), '.credentials.json')), blob);
 });
 
-test('save defaults the name to the email local part', () => {
+test('save defaults the name to the email local part', needsFileBackend, () => {
   login(paths, 'work@example.com');
 
   assert.equal(saveAccount(paths).name, 'work');
@@ -100,7 +113,7 @@ test('save refuses when logged out', () => {
   assert.throws(() => saveAccount(paths, 'work'), /Not logged in/);
 });
 
-test('findByEmail resolves a snapshot, and returns null for a stranger', () => {
+test('findByEmail resolves a snapshot, and returns null for a stranger', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
 
@@ -109,7 +122,7 @@ test('findByEmail resolves a snapshot, and returns null for a stranger', () => {
   assert.equal(findByEmail(paths, undefined), null);
 });
 
-test('rotate picks the account switched away from longest ago', () => {
+test('rotate picks the account switched away from longest ago', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com');
@@ -124,7 +137,7 @@ test('rotate picks the account switched away from longest ago', () => {
   assert.equal(pickRotationTarget(paths), 'work');
 });
 
-test('rotate refuses with nothing saved, and with only the active account saved', () => {
+test('rotate refuses with nothing saved, and with only the active account saved', needsFileBackend, () => {
   assert.throws(() => pickRotationTarget(paths), /No accounts saved/);
 
   login(paths, 'work@example.com');
@@ -132,7 +145,7 @@ test('rotate refuses with nothing saved, and with only the active account saved'
   assert.throws(() => pickRotationTarget(paths), /nothing to rotate to/);
 });
 
-test('an unknown account names the ones that exist', () => {
+test('an unknown account names the ones that exist', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
 
@@ -143,7 +156,7 @@ test('an unknown account on an empty store says so', () => {
   assert.throws(() => useAccount(paths, 'work'), /No accounts saved yet/);
 });
 
-test('switching to the account already active writes nothing', () => {
+test('switching to the account already active writes nothing', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   const before = readFile(paths.credentialsFile);
@@ -155,7 +168,7 @@ test('switching to the account already active writes nothing', () => {
   assert.deepEqual(readRotationState(paths), {});
 });
 
-test('use swaps tokens and identity, and re-snapshots the outgoing account', () => {
+test('use swaps tokens and identity, and re-snapshots the outgoing account', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com');
@@ -172,7 +185,7 @@ test('use swaps tokens and identity, and re-snapshots the outgoing account', () 
   assert.equal(readJson(paths.configJson).oauthAccount.emailAddress, 'work@example.com');
 });
 
-test('the outgoing snapshot is refreshed, not left on a retired token', () => {
+test('the outgoing snapshot is refreshed, not left on a retired token', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com');
@@ -187,7 +200,7 @@ test('the outgoing snapshot is refreshed, not left on a retired token', () => {
   assert.equal(stashed.refreshToken, 'rotated-token');
 });
 
-test('an outgoing account with no snapshot gets one instead of costing a login', () => {
+test('an outgoing account with no snapshot gets one instead of costing a login', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com'); // never saved
@@ -198,7 +211,7 @@ test('an outgoing account with no snapshot gets one instead of costing a login',
   assert.equal(readJson(path.join(snapshotDir('personal'), 'meta.json')).email, 'personal@example.com');
 });
 
-test('only the oauthAccount key of .claude.json is replaced', () => {
+test('only the oauthAccount key of .claude.json is replaced', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com');
@@ -219,7 +232,7 @@ test('only the oauthAccount key of .claude.json is replaced', () => {
   assert.equal(after.oauthAccount.emailAddress, 'work@example.com');
 });
 
-test('--creds-only swaps the token and leaves identity alone', () => {
+test('--creds-only swaps the token and leaves identity alone', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com');
@@ -231,7 +244,7 @@ test('--creds-only swaps the token and leaves identity alone', () => {
   assert.equal(readJson(paths.configJson).oauthAccount.emailAddress, 'personal@example.com');
 });
 
-test('the regenerable auth caches are dropped, so nothing reports the old account', () => {
+test('the regenerable auth caches are dropped, so nothing reports the old account', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com');
@@ -243,7 +256,7 @@ test('the regenerable auth caches are dropped, so nothing reports the old accoun
   for (const cache of paths.authCaches) assert.equal(fs.existsSync(cache), false);
 });
 
-test('a missing auth cache is not an error', () => {
+test('a missing auth cache is not an error', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com');
@@ -252,7 +265,7 @@ test('a missing auth cache is not an error', () => {
   assert.doesNotThrow(() => useAccount(paths, 'work'));
 });
 
-test('the switch publishes which account is live', () => {
+test('the switch publishes which account is live', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   login(paths, 'personal@example.com');
@@ -265,7 +278,7 @@ test('the switch publishes which account is live', () => {
   assert.equal(state.email, 'work@example.com');
 });
 
-test('a switch away from a logged-out state needs no re-snapshot', () => {
+test('a switch away from a logged-out state needs no re-snapshot', needsFileBackend, () => {
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   logout(paths);
@@ -276,16 +289,20 @@ test('a switch away from a logged-out state needs no re-snapshot', () => {
   assert.equal(result.status.email, 'work@example.com');
 });
 
-test('snapshots and the files inside them carry the documented modes', { skip: !posix }, () => {
-  login(paths, 'work@example.com');
-  saveAccount(paths, 'work');
-  login(paths, 'personal@example.com');
-  saveAccount(paths, 'personal');
-  useAccount(paths, 'work');
+test(
+  'snapshots and the files inside them carry the documented modes',
+  { skip: !posix || needsFileBackend.skip },
+  () => {
+    login(paths, 'work@example.com');
+    saveAccount(paths, 'work');
+    login(paths, 'personal@example.com');
+    saveAccount(paths, 'personal');
+    useAccount(paths, 'work');
 
-  const mode = (file) => fs.statSync(file).mode & 0o777;
-  assert.equal(mode(snapshotDir('work')), 0o700);
-  assert.equal(mode(path.join(snapshotDir('work'), '.credentials.json')), 0o600);
-  assert.equal(mode(path.join(snapshotDir('work'), 'oauthAccount.json')), 0o600);
-  assert.equal(mode(paths.credentialsFile), 0o600);
-});
+    const mode = (file) => fs.statSync(file).mode & 0o777;
+    assert.equal(mode(snapshotDir('work')), 0o700);
+    assert.equal(mode(path.join(snapshotDir('work'), '.credentials.json')), 0o600);
+    assert.equal(mode(path.join(snapshotDir('work'), 'oauthAccount.json')), 0o600);
+    assert.equal(mode(paths.credentialsFile), 0o600);
+  },
+);

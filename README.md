@@ -134,6 +134,8 @@ Everything a switch reads, writes and deletes: [`docs/account-storage.md`](docs/
 Verified on Windows against subscription accounts on the first-party API. The macOS Keychain path
 is written but untested.
 
-## License
+## Licence
 
-MIT © 2026 Giovanni Sasso
+MIT. See [LICENSE](LICENSE).
+
+Not affiliated with Anthropic. "Claude" and "Claude Code" are trademarks of their respective owner.
