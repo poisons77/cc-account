@@ -1,0 +1,44 @@
+{
+  "name": "cc-account",
+  "version": "0.1.0",
+  "description": "Switch the active Claude Code account from the command line. No browser, no re-login. Zero dependencies.",
+  "keywords": [
+    "claude-code",
+    "account",
+    "switcher",
+    "credentials",
+    "cli"
+  ],
+  "type": "module",
+  "bin": {
+    "cc-account": "bin/cc-account.js"
+  },
+  "exports": {
+    ".": "./src/accounts.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "commands",
+    ".claude-plugin",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "author": "Giovanni Sasso <gsasso.dev@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/poisons77/cc-account.git"
+  },
+  "bugs": {
+    "url": "https://github.com/poisons77/cc-account/issues"
+  },
+  "homepage": "https://github.com/poisons77/cc-account#readme"
+}

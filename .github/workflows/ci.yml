@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Test
+        run: npm test
+      # Runs from the packed tarball, not the repo. A file the CLI needs at runtime but
+      # `files` omits works in the checkout and fails once published; only this catches it.
+      - name: Smoke test the packed tarball
+        run: |
+          npm pack
+          mkdir -p packtest
+          tar -xzf cc-account-*.tgz -C packtest
+          CC_ACCOUNT_HOME="$PWD/packtest/empty-store" \
+            node packtest/package/bin/cc-account.js list | grep -q "No accounts saved"
+        shell: bash
