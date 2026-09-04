@@ -4,12 +4,47 @@ Optional, and split across two tools. [cc-pace](https://github.com/poisons77/cc-
 rate-limit windows it already renders in the status line and decides when to move; cc-account
 performs the switch and publishes which account is live.
 
-The pattern: a smaller plan whose 5-hour window fills fast, held next to a larger one kept in
-reserve. Burn the primary, move to the fallback when a window runs dry, return the moment it refills.
+Neither tool needs the other. cc-account switches on demand with no statusline installed; cc-pace
+renders usage with one account. The pairing exists because each holds half of what an automatic
+switch needs: cc-pace sees the rate-limit windows and cc-account can act on them and say who is now
+live.
 
-## Set it up
+## The cheap link
 
-Install both, then add a `rotation` block to `~/.config/cc-pace/config.json`:
+cc-pace can run one command per window when a bucket crosses a percentage, without knowing anything
+about accounts. In `~/.config/cc-pace/config.json`:
+
+```json
+{
+  "onThreshold": { "bucket": "five_hour", "at": 95, "run": "cc-account rotate" }
+}
+```
+
+`rotate` moves to the account switched away from longest ago, so no names appear in the config and
+nothing is stored beyond a latch that clears when the window resets. This is the whole integration
+for a two-account setup that only needs to get off a spent window.
+
+## The rotation engine
+
+For more than one watched window, a target chosen on evidence, and the outcome shown in the line,
+use the `rotation` block instead. Two shapes, depending on how the accounts relate.
+
+**Peers.** Accounts of equal worth. Spend the one you are on down to its bar, then move to whichever
+peer has the most room.
+
+```json
+{
+  "rotation": {
+    "accounts": ["work", "personal"],
+    "buckets": { "five_hour": 95, "seven_day": { "at": 95, "lateAt": 99, "lateWithinSecs": 129600 } },
+    "command": "cc-account"
+  }
+}
+```
+
+**Primary and reserve.** A smaller plan whose 5-hour window fills fast, held next to a larger one
+kept back. Burn the primary, move to the fallback when a window runs dry, return the moment it
+refills.
 
 ```json
 {
@@ -22,9 +57,13 @@ Install both, then add a `rotation` block to `~/.config/cc-pace/config.json`:
 }
 ```
 
-`primary` and `fallback` are cc-account snapshot names, so both must exist - run `cc-account save`
-once per account first. `command` is invoked as `<command> use <account>`, and must be on `PATH`;
-give an absolute path to `node` and to `bin/cc-account.js` if cc-account is not installed globally.
+Account names are cc-account snapshot names, so each must exist - run `cc-account save` once per
+account first. `command` is invoked as `<command> use <account>`, and must be on `PATH`; give an
+absolute path to `node` and to `bin/cc-account.js` if cc-account is not installed globally.
+
+A bucket takes a plain percentage, or `{ "at", "lateAt", "lateWithinSecs" }` to raise the bar as the
+reset nears: percent abandoned early in a weekly window is gone for days, while the same percent
+just before a refill is nearly worthless.
 
 The full field list, including per-window thresholds and the return grace period, is in
 [cc-pace's rotation guide](https://github.com/poisons77/cc-pace/blob/main/docs/rotation.md).

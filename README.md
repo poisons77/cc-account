@@ -76,23 +76,53 @@ $ cc-account use personal
 | `current` | Show who is logged in now, and re-publish it after a manual `/login`. |
 | `--creds-only` | Swap tokens only, leaving `oauthAccount` untouched. |
 
-## Automatic rotation
+## Switching on its own
 
-Pair with [cc-pace](https://github.com/poisons77/cc-pace) to switch on its own: burn the smaller
-plan, fall back to the reserve when a window runs dry, return the moment it refills.
+cc-account switches when told to. It has no opinion about *when*, because it never sees your usage:
+it reads local files and asks `claude auth status` who is logged in. Deciding the moment needs the
+rate-limit windows, and those arrive in the Claude Code statusline payload, which is
+[cc-pace](https://github.com/poisons77/cc-pace)'s input.
+
+Each tool stands alone. cc-account switches on demand with no statusline installed, and cc-pace
+renders usage whether or not you own a second account. Together they close the loop: cc-pace decides
+*when*, cc-account performs the switch and publishes *who* is live, which is the identity the
+payload does not carry and cc-pace cannot otherwise know.
+
+Install cc-pace, then connect them at one of two depths.
+
+**One command at a threshold.** cc-pace runs any command once per window when a bucket crosses a
+percentage, in `~/.config/cc-pace/config.json`:
+
+```json
+{
+  "onThreshold": { "bucket": "five_hour", "at": 95, "run": "cc-account rotate" }
+}
+```
+
+`rotate` picks the account switched away from longest ago, so no account names appear in the config.
+
+**The rotation engine.** Watches several windows, picks a target on what it knows of each account,
+and reports the outcome in the status line:
 
 ```json
 {
   "rotation": {
-    "primary": "work",
-    "fallback": "personal",
-    "buckets": { "five_hour": 95, "seven_day": 99 },
+    "accounts": ["work", "personal"],
+    "buckets": { "five_hour": 95, "seven_day": { "at": 95, "lateAt": 99, "lateWithinSecs": 129600 } },
     "command": "cc-account"
   }
 }
 ```
 
-Setup and limits: [`docs/rotation.md`](docs/rotation.md).
+```
+Session: 95% (2h18m) | Weekly: 67% (4d20h) | → switching to personal
+Session: 2% (5h0m)   | Weekly: 61% (4d2h)  | ✓ on personal
+```
+
+Name `primary` and `fallback` instead of `accounts` for a reserve you return to rather than peers
+you rotate between. Both shapes call `cc-account use <name>`, so the snapshots must exist first.
+
+Setup, the identity file this publishes, and the limits: [`docs/rotation.md`](docs/rotation.md).
 
 ## What `use` does
 
