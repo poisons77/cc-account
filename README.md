@@ -5,11 +5,11 @@ re-authorization.
 
 ```console
 $ cc-account list
-  work       me@company.com  [max]
-* perso      me@example.com  [max]
+* personal  me@example.com  [max]
+  work      me@company.com  [max]
 
 $ cc-account use work
-Saved 'perso' before switching.
+Saved 'personal' before switching.
 Now on 'work'  ->  me@company.com [max]
 ```
 
@@ -51,8 +51,8 @@ Or as a Claude Code plugin, which adds an `/account` command:
 Snapshot each account once, right after signing in as it:
 
 ```console
-$ cc-account save perso
-Saved 'perso'  <-  me@example.com [max]
+$ cc-account save personal
+Saved 'personal'  <-  me@example.com [max]
 
 $ claude auth logout
 $ claude auth login          # sign in as the other account
@@ -62,7 +62,7 @@ $ cc-account save work
 That is the last time you see a magic link. From then on:
 
 ```console
-$ cc-account use perso
+$ cc-account use personal
 ```
 
 ## Commands
@@ -110,7 +110,7 @@ Setup and limits: [`docs/rotation.md`](docs/rotation.md).
 
 ```
 ~/.claude-accounts/
-  perso/
+  personal/
     .credentials.json    token blob, copied verbatim and never parsed
     oauthAccount.json    identity
     meta.json            email, plan, authMethod, savedAt
