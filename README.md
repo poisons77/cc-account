@@ -17,8 +17,8 @@ Running sessions pick up the new account on their next API call, so nothing need
 
 ## Why it takes a tool
 
-Signing in mints an OAuth token. Every step of that flow — the web login, the emailed link, the
-authorization window — exists only to produce it. Save the token once per account and every later
+Signing in mints an OAuth token. Every step of that flow - the web login, the emailed link, the
+authorization window - exists only to produce it. Save the token once per account and every later
 switch is a copy.
 
 Claude Code splits one account across two places, and moving only the first leaves a stale
@@ -99,7 +99,7 @@ Setup and limits: [`docs/rotation.md`](docs/rotation.md).
 1. Target already active → report and stop, nothing written.
 2. Re-snapshot the outgoing account. Refresh tokens rotate, so a snapshot left behind goes dead;
    an account that has no snapshot yet gets one here rather than costing a browser login later.
-3. Write the target's tokens atomically — temp file plus rename, or a Keychain update in place —
+3. Write the target's tokens atomically - temp file plus rename, or a Keychain update in place -
    so a live session reads either the old set or the new one, never a partial write.
 4. Replace only the `oauthAccount` key of `~/.claude.json`. Unrelated state in that file,
    including MCP server logins, is left alone.

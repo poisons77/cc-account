@@ -10,7 +10,7 @@ const fakeClaude = path.join(here, 'fixtures', 'fake-claude.js');
 
 /**
  * Put a fake `claude` on PATH. On Windows it has to be a .cmd, which is the
- * shape execFileSync cannot spawn directly — so this also exercises the
+ * shape execFileSync cannot spawn directly - so this also exercises the
  * shell fallback in authStatus rather than working around it.
  */
 function installShim(dir) {

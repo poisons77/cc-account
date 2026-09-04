@@ -9,7 +9,7 @@ const SECURITY = '/usr/bin/security';
 export const usesKeychain = () => process.platform === 'darwin';
 
 /**
- * Read the raw credential blob. Never parsed — it is a token bundle, and
+ * Read the raw credential blob. Never parsed - it is a token bundle, and
  * round-tripping it through JSON risks dropping fields we do not know about.
  */
 export function readCredentials(paths) {

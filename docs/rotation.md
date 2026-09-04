@@ -22,7 +22,7 @@ Install both, then add a `rotation` block to `~/.config/cc-pace/config.json`:
 }
 ```
 
-`primary` and `fallback` are cc-account snapshot names, so both must exist — run `cc-account save`
+`primary` and `fallback` are cc-account snapshot names, so both must exist - run `cc-account save`
 once per account first. `command` is invoked as `<command> use <account>`, and must be on `PATH`;
 give an absolute path to `node` and to `bin/cc-account.js` if cc-account is not installed globally.
 
@@ -32,7 +32,7 @@ The full field list, including per-window thresholds and the return grace period
 ## Why cc-account publishes identity
 
 The statusline payload carries `session_id`, `cwd`, `model`, `cost`, `context_window` and
-`rate_limits` — and **no account identity**. Nothing in it says whose limits are being rendered, so
+`rate_limits` - and **no account identity**. Nothing in it says whose limits are being rendered, so
 a status line cannot know which account it is looking at.
 
 cc-account writes the answer on every switch:
@@ -73,7 +73,7 @@ schtasks /Query  /TN "cc-account-switchback" /FO LIST /V   # Last Result: 0 mean
 schtasks /Delete /TN "cc-account-switchback" /F
 ```
 
-Use the absolute path to `node.exe` — a scheduled task does not inherit the interactive `PATH`.
+Use the absolute path to `node.exe` - a scheduled task does not inherit the interactive `PATH`.
 Created this way the task runs only while the user is logged on; add `/RU` and `/RP` for a stored
 credential if it must fire from a locked session. The reset time to aim at is the one the status
 line already shows.

@@ -102,7 +102,7 @@ export function saveAccount(paths, name) {
  * Swap in a saved account. Deliberately does not require Claude Code to be
  * closed: it re-reads credentials on its next API call, and both writes here
  * are atomic. Only the oauthAccount key of .claude.json is replaced, so
- * unrelated state in that file — MCP server logins in particular — survives.
+ * unrelated state in that file - MCP server logins in particular - survives.
  */
 export function useAccount(paths, name, { credsOnly = false } = {}) {
   const dir = accountDir(paths, name);
@@ -122,7 +122,7 @@ export function useAccount(paths, name, { credsOnly = false } = {}) {
 
   // Refresh tokens rotate: without this the outgoing account keeps a snapshot
   // whose token the server has already retired. An account with no snapshot at
-  // all gets one now — otherwise switching away from it costs a browser login.
+  // all gets one now - otherwise switching away from it costs a browser login.
   let restashed = null;
   if (current?.loggedIn) {
     restashed = saveAccount(paths, findByEmail(paths, current.email)).name;

@@ -13,7 +13,7 @@ disk is read or written.
 Both carry the account. Moving only the tokens leaves the previous identity in place, so a switch
 always moves both.
 
-`~/.claude.json` holds far more than the account — `userID`, MCP server state, per-project history.
+`~/.claude.json` holds far more than the account - `userID`, MCP server state, per-project history.
 **Only the `oauthAccount` key is replaced.** Everything else in the file is left untouched, which is
 why MCP logins survive a switch.
 
@@ -68,7 +68,7 @@ A snapshot older than the last refresh is stranded on a dead token.
 | Console / API billing | `claude auth login --console` | the same two locations | yes |
 | Raw API key | `ANTHROPIC_API_KEY` / `apiKeyHelper` | environment or `settings.json` | nothing to swap |
 
-Raw API keys need no tool — switching one is a shell variable. cc-account exists to replay OAuth
+Raw API keys need no tool - switching one is a shell variable. cc-account exists to replay OAuth
 tokens, which cannot be retyped.
 
 ## Security

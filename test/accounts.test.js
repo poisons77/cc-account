@@ -19,7 +19,7 @@ const posix = process.platform !== 'win32';
 
 /**
  * On macOS the credential backend is the login Keychain, not a file under the
- * config dir, so the sandbox cannot stand in for it — `readCredentials` would
+ * config dir, so the sandbox cannot stand in for it - `readCredentials` would
  * miss and `writeCredentials` would touch the real Keychain. Everything that
  * moves a token is skipped there; what remains covers the index and the guards.
  */
