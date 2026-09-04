@@ -9,6 +9,24 @@ renders usage with one account. The pairing exists because each holds half of wh
 switch needs: cc-pace sees the rate-limit windows and cc-account can act on them and say who is now
 live.
 
+## Install cc-pace
+
+```console
+npm install -g claude-code-pace
+```
+
+Then point Claude Code's status line at it, in `~/.claude/settings.json`:
+
+```json
+{ "statusLine": { "type": "command", "command": "cc-pace" } }
+```
+
+`cc-pace --setup` prints that snippet. Both tools must be on `PATH`, because the rotation config
+names `cc-account` as a command; give an absolute path to `node` and to `bin/cc-account.js` instead
+if cc-account is not installed globally.
+
+Rotation runs when the status line renders, so a status line that is not cc-pace runs no rotation.
+
 ## The cheap link
 
 cc-pace can run one command per window when a bucket crosses a percentage, without knowing anything

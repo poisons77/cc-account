@@ -10,6 +10,13 @@ const CREDENTIALS_SNAPSHOT = '.credentials.json';
 const ACCOUNT_SNAPSHOT = 'oauthAccount.json';
 const META = 'meta.json';
 
+/**
+ * Names the `/cc-account` slash command spends on its own subcommands. An account called one of
+ * these would be reachable from the CLI but not from the slash command, so it is refused at save
+ * time rather than left as a trap to discover later.
+ */
+export const RESERVED_NAMES = ['rotate', 'current'];
+
 /** Ask the CLI who is logged in. Returns null when it is unavailable. */
 export function authStatus() {
   const run = (options) =>
@@ -76,6 +83,12 @@ export function saveAccount(paths, name) {
   if (!blob) throw new Error('No stored credentials found to snapshot.');
 
   const resolved = name || slugify(status.email);
+  if (RESERVED_NAMES.includes(resolved)) {
+    throw new Error(
+      `'${resolved}' is a /cc-account subcommand and cannot name an account. Pick another name.`,
+    );
+  }
+
   const dir = accountDir(paths, resolved);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 

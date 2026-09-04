@@ -86,6 +86,9 @@ $ cc-account use personal
 | `current` | Show who is logged in now, and re-publish it after a manual `/login`. |
 | `--creds-only` | Swap tokens only, leaving `oauthAccount` untouched. |
 
+`rotate` and `current` cannot be used as account names. `save` refuses them, so the `/cc-account`
+slash command can treat them as subcommands without ever hiding an account.
+
 ## Switching on its own
 
 cc-account switches when told to. It has no opinion about *when*, because it never sees your usage:

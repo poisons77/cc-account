@@ -8,6 +8,7 @@ import {
   findByEmail,
   listAccounts,
   pickRotationTarget,
+  RESERVED_NAMES,
   saveAccount,
   slugify,
   useAccount,
@@ -107,6 +108,24 @@ test('save defaults the name to the email local part', needsFileBackend, () => {
   login(paths, 'work@example.com');
 
   assert.equal(saveAccount(paths).name, 'work');
+});
+
+test('save refuses a name the slash command would swallow', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+
+  for (const reserved of RESERVED_NAMES) {
+    assert.throws(
+      () => saveAccount(paths, reserved),
+      new RegExp(`'${reserved}' is a /cc-account subcommand`),
+    );
+    assert.equal(fs.existsSync(snapshotDir(reserved)), false);
+  }
+});
+
+test('a reserved name is refused even when it comes from the email', needsFileBackend, () => {
+  login(paths, 'rotate@example.com');
+
+  assert.throws(() => saveAccount(paths), /cannot name an account/);
 });
 
 test('save refuses when logged out', () => {

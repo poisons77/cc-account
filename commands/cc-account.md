@@ -16,7 +16,8 @@ Run exactly one command, matching the first case that applies, then report its o
 - `$1` is anything else, treat it as an account name:
   `node "${CLAUDE_PLUGIN_ROOT}/bin/cc-account.js" use $1`
 
-`rotate` and `current` are reserved, so a snapshot named either is reachable only from the CLI.
+`rotate` and `current` are reserved: `cc-account save` refuses them, so no account can carry a name
+this command would swallow.
 
 The switch takes effect on this session's next API call, so no restart is needed.
 Report the resulting account and nothing more.
