@@ -39,12 +39,22 @@ Requires Node 22+ and the `claude` CLI on `PATH`.
 npm install -g cc-account
 ```
 
-Or as a Claude Code plugin, which adds an `/account` command:
+Or as a Claude Code plugin, which needs no `PATH` entry and adds a `/cc-account` command:
 
 ```
 /plugin marketplace add poisons77/cc-account
 /plugin install cc-account@cc-account
 ```
+
+```
+/cc-account              list snapshots
+/cc-account rotate       switch to the account left longest ago
+/cc-account personal     switch to that account
+/cc-account current      re-sync identity after a manual /login
+```
+
+Plugins do not auto-update. `/plugin update cc-account` pulls a newer commit; the npm install is
+the one that tracks releases.
 
 ## Use
 
