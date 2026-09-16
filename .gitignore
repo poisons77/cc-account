@@ -1,0 +1,19 @@
+node_modules/
+npm-debug.log*
+*.log
+coverage/
+
+# `npm pack` and the packed-tarball check the CI `pack` job runs.
+*.tgz
+packtest/
+
+.env*
+
+# Conventions, review agents and research: this machine only.
+.claude/
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.stackdump
