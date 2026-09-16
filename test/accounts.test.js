@@ -4,17 +4,33 @@ import path from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 
 import {
+  accountsWithExpiry,
   authStatus,
+  EXPIRY_WARNING_MS,
+  expiringAccounts,
   findByEmail,
   listAccounts,
+  loggedInEmail,
   pickRotationTarget,
+  renewAccount,
   RESERVED_NAMES,
   saveAccount,
+  setBrowser,
   slugify,
   useAccount,
 } from '../src/accounts.js';
 import { readRotationState } from '../src/rotationState.js';
-import { login, logout, readFile, readJson, sandbox } from './helpers.js';
+import {
+  expiringIn,
+  login,
+  logout,
+  readFile,
+  readJson,
+  recordArgs,
+  sandbox,
+} from './helpers.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const posix = process.platform !== 'win32';
 
@@ -306,6 +322,221 @@ test('a switch away from a logged-out state needs no re-snapshot', needsFileBack
 
   assert.equal(result.restashed, null);
   assert.equal(result.status.email, 'work@example.com');
+});
+
+test('save refuses to overwrite a snapshot that holds another account', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  const workBlob = readFile(path.join(snapshotDir('work'), '.credentials.json'));
+  login(paths, 'personal@example.com');
+
+  assert.throws(
+    () => saveAccount(paths, 'work'),
+    /'work' holds work@example\.com, but personal@example\.com is logged in\. Nothing was changed\. Save personal@example\.com under another name first: cc-account save <another-name>/,
+  );
+  assert.equal(readFile(path.join(snapshotDir('work'), '.credentials.json')), workBlob);
+});
+
+test('two emails sharing a local part stop the switch instead of overwriting', needsFileBackend, () => {
+  login(paths, 'me@one.example');
+  saveAccount(paths); // saved as 'me'
+  login(paths, 'me@two.example'); // never saved; its default name is also 'me'
+
+  assert.throws(() => useAccount(paths, 'me'), /'me' holds me@one\.example/);
+  assert.equal(readJson(path.join(snapshotDir('me'), 'meta.json')).email, 'me@one.example');
+});
+
+test('the browser setting survives a re-save', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  setBrowser(paths, 'work', ['chrome', '--profile-directory=Profile 2']);
+
+  saveAccount(paths, 'work');
+
+  assert.deepEqual(readJson(path.join(snapshotDir('work'), 'meta.json')).browser, [
+    'chrome',
+    '--profile-directory=Profile 2',
+  ]);
+  setBrowser(paths, 'work', null);
+  assert.equal('browser' in readJson(path.join(snapshotDir('work'), 'meta.json')), false);
+});
+
+test('expiry comes from each snapshot, and from the live login for the active account', needsFileBackend, () => {
+  login(paths, 'work@example.com', expiringIn(10 * DAY_MS));
+  saveAccount(paths, 'work');
+  login(paths, 'personal@example.com', expiringIn(2 * DAY_MS));
+  saveAccount(paths, 'personal');
+  // A manual /login renews the live account without touching its snapshot.
+  const renewed = expiringIn(30 * DAY_MS);
+  login(paths, 'personal@example.com', renewed);
+
+  const byName = Object.fromEntries(
+    accountsWithExpiry(paths, 'personal@example.com').map((account) => [account.name, account]),
+  );
+
+  assert.equal(byName.personal.active, true);
+  assert.equal(byName.personal.expiresAt, renewed.claudeAiOauth.refreshTokenExpiresAt);
+  assert.equal(byName.work.active, false);
+  assert.ok(Math.abs(byName.work.expiresAt - (Date.now() + 10 * DAY_MS)) < 60_000);
+});
+
+test('only logins inside the warning window are expiring, expired ones included', needsFileBackend, () => {
+  login(paths, 'soon@example.com', expiringIn(EXPIRY_WARNING_MS - DAY_MS));
+  saveAccount(paths, 'soon');
+  login(paths, 'gone@example.com', expiringIn(-DAY_MS));
+  saveAccount(paths, 'gone');
+  login(paths, 'fine@example.com', expiringIn(EXPIRY_WARNING_MS + DAY_MS));
+  saveAccount(paths, 'fine');
+  login(paths, 'unknown@example.com'); // a blob that carries no expiry
+  saveAccount(paths, 'unknown');
+
+  const names = expiringAccounts(paths, null).map((account) => account.name).sort();
+
+  assert.deepEqual(names, ['gone', 'soon']);
+});
+
+test('renew replaces the snapshot login and leaves the live account alone', needsFileBackend, () => {
+  login(paths, 'work@example.com', expiringIn(DAY_MS));
+  saveAccount(paths, 'work');
+  login(paths, 'personal@example.com');
+  saveAccount(paths, 'personal');
+  const liveBefore = readFile(paths.credentialsFile);
+
+  const result = renewAccount(paths, 'work');
+
+  const snapshot = readJson(path.join(snapshotDir('work'), '.credentials.json'));
+  assert.equal(snapshot.refreshToken, 'renewed-for-work@example.com');
+  assert.equal(result.expiresAt, snapshot.claudeAiOauth.refreshTokenExpiresAt);
+  assert.ok(result.expiresAt > Date.now() + 20 * DAY_MS);
+  assert.equal(result.active, false);
+  assert.equal(result.status.email, 'work@example.com');
+  assert.equal(readFile(paths.credentialsFile), liveBefore);
+  assert.deepEqual(fs.readdirSync(box.tmp), [], 'the throwaway login dir is removed');
+});
+
+test('renewing the live account makes the new login live too', needsFileBackend, () => {
+  login(paths, 'work@example.com', expiringIn(DAY_MS));
+  saveAccount(paths, 'work');
+
+  const result = renewAccount(paths, 'work');
+
+  assert.equal(result.active, true);
+  assert.equal(readJson(paths.credentialsFile).refreshToken, 'renewed-for-work@example.com');
+  assert.equal(
+    readFile(paths.credentialsFile),
+    readFile(path.join(snapshotDir('work'), '.credentials.json')),
+  );
+});
+
+test('renew keeps nothing when the browser signs in another account', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  const before = readFile(path.join(snapshotDir('work'), '.credentials.json'));
+  process.env.FAKE_BROWSER_ACCOUNT = 'personal@example.com';
+
+  assert.throws(
+    () => renewAccount(paths, 'work'),
+    /The browser signed in personal@example\.com, not work@example\.com\. Nothing was changed\./,
+  );
+  assert.equal(readFile(path.join(snapshotDir('work'), '.credentials.json')), before);
+  assert.equal(findByEmail(paths, 'personal@example.com'), null);
+  assert.deepEqual(fs.readdirSync(box.tmp), []);
+});
+
+test('an abandoned renew changes nothing', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  const before = readFile(path.join(snapshotDir('work'), '.credentials.json'));
+  process.env.FAKE_BROWSER_ACCOUNT = '';
+
+  assert.throws(() => renewAccount(paths, 'work'), /did not complete\. Nothing was changed\./);
+  assert.equal(readFile(path.join(snapshotDir('work'), '.credentials.json')), before);
+  assert.deepEqual(fs.readdirSync(box.tmp), []);
+});
+
+test('renew opens the sign-in page with the account\'s own browser, hinting its email', needsFileBackend, async () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  const out = path.join(box.root, 'opened.json');
+  setBrowser(paths, 'work', [process.execPath, recordArgs, out, '--profile-directory=Profile 2']);
+
+  let announced;
+  renewAccount(paths, 'work', { onLogin: (command, email) => (announced = { command, email }) });
+
+  assert.equal(announced.email, 'work@example.com');
+  assert.equal(announced.command[0], process.execPath);
+  // The browser is started detached, so it may land after renew returns.
+  for (let waited = 0; !fs.existsSync(out) && waited < 10_000; waited += 50) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const [flag, url] = readJson(out);
+  assert.equal(flag, '--profile-directory=Profile 2');
+  // Whole, `&` included: a shell along the way would have cut it there.
+  assert.match(url, /\?code=true&login_hint=work%40example\.com$/);
+});
+
+test('renew keeps the time the account was last switched away from, which rotate orders by', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  backdate('work', '2026-01-01T00:00:00.000Z');
+  login(paths, 'personal@example.com');
+  saveAccount(paths, 'personal');
+
+  renewAccount(paths, 'work');
+
+  assert.equal(readJson(path.join(snapshotDir('work'), 'meta.json')).savedAt, '2026-01-01T00:00:00.000Z');
+});
+
+test('renew clears login dirs a killed renew left behind, and only stale ones', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  const stale = fs.mkdtempSync(paths.loginScratch);
+  fs.writeFileSync(path.join(stale, '.credentials.json'), 'leftover token');
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  fs.utimesSync(stale, twoHoursAgo, twoHoursAgo);
+  const inProgress = fs.mkdtempSync(paths.loginScratch);
+
+  renewAccount(paths, 'work');
+
+  assert.deepEqual(fs.readdirSync(box.tmp), [path.basename(inProgress)]);
+});
+
+test('renew refuses an email the Windows shell would rewrite', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  const metaFile = path.join(snapshotDir('work'), 'meta.json');
+  fs.writeFileSync(metaFile, JSON.stringify({ ...readJson(metaFile), email: '%USERNAME%@example.com' }));
+
+  assert.throws(() => renewAccount(paths, 'work'), /Cannot pass %USERNAME%@example\.com to claude/);
+});
+
+test('a .claude.json that cannot be read stops a switch before anything is written', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  login(paths, 'personal@example.com');
+  saveAccount(paths, 'personal');
+  fs.writeFileSync(paths.configJson, '{ "userID": "user-123", torn');
+  const liveBefore = readFile(paths.credentialsFile);
+
+  assert.throws(() => useAccount(paths, 'work'), SyntaxError);
+  assert.equal(readFile(paths.credentialsFile), liveBefore);
+  assert.equal(readFile(paths.configJson), '{ "userID": "user-123", torn');
+});
+
+test('a logged-out status names nobody, even if it carries an email', () => {
+  assert.equal(loggedInEmail({ loggedIn: false, email: 'stale@example.com' }), null);
+  assert.equal(loggedInEmail({ loggedIn: true, email: 'work@example.com' }), 'work@example.com');
+  assert.equal(loggedInEmail(null), null);
+});
+
+test('renew refuses an unknown account', () => {
+  assert.throws(() => renewAccount(paths, 'work'), /Unknown account 'work'/);
+});
+
+test('renew is refused on macOS, where the login would reach the shared Keychain', {
+  skip: process.platform !== 'darwin' && 'only macOS uses the Keychain',
+}, () => {
+  assert.throws(() => renewAccount(paths, 'work'), /not available on macOS/);
 });
 
 test(

@@ -1,7 +1,7 @@
 {
   "name": "cc-account",
-  "version": "0.1.0",
-  "description": "Switch the active Claude Code account from the command line. No browser, no re-login. Zero dependencies.",
+  "version": "0.2.0",
+  "description": "Switch the active Claude Code account from the command line: save each login once, switch with a file copy, renew one when it expires. Zero dependencies.",
   "keywords": [
     "claude-code",
     "account",
@@ -20,6 +20,7 @@
     "bin",
     "src",
     "commands",
+    "hooks",
     ".claude-plugin",
     "docs",
     "README.md",

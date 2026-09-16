@@ -147,3 +147,6 @@ accounts near their weekly caps it moves anyway, then reports `! both limited`.
 
 Two sessions can cross a threshold at the same moment and both fire. The second lands on an
 account that is already active and stops without writing.
+
+An account whose login has expired is still a rotation target, and switching to it leaves Claude
+Code logged out. `cc-account list` shows every expiry; `cc-account renew <name>` resets one.

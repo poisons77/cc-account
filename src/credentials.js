@@ -1,6 +1,7 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+
+import { writeFileAtomic } from './jsonFile.js';
 
 /** Keychain service Claude Code stores its token blob under on macOS. */
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
@@ -59,8 +60,22 @@ export function writeCredentials(paths, blob) {
     return;
   }
 
-  fs.mkdirSync(path.dirname(paths.credentialsFile), { recursive: true });
-  const tmp = `${paths.credentialsFile}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, blob, { mode: 0o600 });
-  fs.renameSync(tmp, paths.credentialsFile);
+  writeFileAtomic(paths.credentialsFile, blob);
+}
+
+/**
+ * When the login behind a blob stops refreshing, in epoch milliseconds, or null when the blob does
+ * not say. Refreshing hands out a new refresh token but carries this date over unchanged, so only a
+ * browser login moves it. This reads one field of a parsed copy; the blob itself is only ever
+ * written back as the original string.
+ */
+export function refreshTokenExpiry(blob) {
+  try {
+    const expiry = JSON.parse(blob)?.claudeAiOauth?.refreshTokenExpiresAt;
+    // Milliseconds are past 1e12 since 2001. A value in seconds would read as 1970 and flag every
+    // login as expired, so it counts as unknown instead.
+    return Number.isFinite(expiry) && expiry > 1e12 ? expiry : null;
+  } catch {
+    return null;
+  }
 }

@@ -7,6 +7,7 @@ import { resolvePaths } from '../src/paths.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fakeClaude = path.join(here, 'fixtures', 'fake-claude.js');
+export const recordArgs = path.join(here, 'fixtures', 'record-args.js');
 
 /**
  * Put a fake `claude` on PATH. On Windows it has to be a .cmd, which is the
@@ -25,8 +26,9 @@ function installShim(dir) {
 }
 
 /**
- * A throwaway config dir, account store and `claude` shim, wired through the
- * environment so nothing touches the real ones. Call restore() when done.
+ * A throwaway config dir, account store, temp dir and `claude` shim, wired
+ * through the environment so nothing touches the real ones. Call restore()
+ * when done.
  */
 export function sandbox() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-account-test-'));
@@ -37,17 +39,23 @@ export function sandbox() {
     CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
     CC_ACCOUNT_HOME: process.env.CC_ACCOUNT_HOME,
     PATH: process.env.PATH,
+    FAKE_BROWSER_ACCOUNT: process.env.FAKE_BROWSER_ACCOUNT,
+    FAKE_RENEWED_EXPIRY: process.env.FAKE_RENEWED_EXPIRY,
   };
 
   process.env.CLAUDE_CONFIG_DIR = path.join(root, 'config');
   process.env.CC_ACCOUNT_HOME = path.join(root, 'store');
   process.env.PATH = `${binDir}${path.delimiter}${saved.PATH}`;
 
-  const paths = resolvePaths(process.env, root);
+  const tmp = path.join(root, 'tmp');
+  // No installed browser is a candidate: a renew test must never open a real window.
+  const paths = { ...resolvePaths(process.env, root, tmp), privateBrowsers: [] };
   fs.mkdirSync(paths.configDir, { recursive: true });
+  fs.mkdirSync(tmp);
 
   return {
     root,
+    tmp,
     paths,
     restore() {
       for (const [key, value] of Object.entries(saved)) {
@@ -75,6 +83,9 @@ export function login(paths, email, extra = {}) {
   config.oauthAccount = { emailAddress: email, accountUuid: `uuid-${email}` };
   fs.writeFileSync(paths.configJson, JSON.stringify(config, null, 2));
 }
+
+/** Blob fields for a login that stops refreshing `ms` from now. */
+export const expiringIn = (ms) => ({ claudeAiOauth: { refreshTokenExpiresAt: Date.now() + ms } });
 
 export function logout(paths) {
   fs.rmSync(paths.credentialsFile, { force: true });

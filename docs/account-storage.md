@@ -42,7 +42,7 @@ rest lives in `~/.claude`.
   personal/
     .credentials.json    token blob, copied verbatim and never parsed
     oauthAccount.json    identity
-    meta.json            email, plan, authMethod, savedAt
+    meta.json            email, plan, authMethod, savedAt, browser
 ```
 
 `meta.json` is the index. The active account is the one whose email matches
@@ -59,6 +59,32 @@ A snapshot older than the last refresh is stranded on a dead token.
   login later.
 - Copying a snapshot directory by hand, or restoring an old one, can hand back a token that no longer
   works. Let `use` manage them.
+
+## Logins expire
+
+The token blob carries `claudeAiOauth.refreshTokenExpiresAt`, the moment the login stops refreshing,
+30 days after it was made. A refresh hands out a new refresh token and carries that moment over
+unchanged, so a snapshot kept current by `use` still expires on the date its login was created with.
+It is the one field cc-account reads out of the blob, to show and warn about expiry; the blob is
+still copied verbatim.
+
+`renew` is the only way to move the date:
+
+![The renew flow: the sign-in runs in a throwaway config directory and opens a private browser
+window; the new login is kept only when its email matches meta.json, otherwise it is discarded and
+the snapshot is left untouched](images/renew-flow.svg)
+
+What it touches:
+
+| What | How |
+|---|---|
+| A throwaway config directory in the system temp directory | `claude auth login` runs with `CLAUDE_CONFIG_DIR` pointed there; removed when `renew` ends, whatever the outcome, and one left by a killed renew is cleared by the next one |
+| The snapshot's three files | replaced only when the new login's email matches `meta.json`. `savedAt` is kept, so a renewal does not change the rotation order |
+| The live tokens and `oauthAccount` | replaced only when the renewed account is the live one, and written before the snapshot, so an interrupted renewal leaves the newer login to be picked up by the next switch |
+
+The browser comes from `meta.json` → `browser` when set, and otherwise from the first of Chrome,
+Edge and Firefox found installed, opened in a private window. Claude Code starts it through the
+`BROWSER` variable. With none found, Claude Code prints the sign-in link to open by hand.
 
 ## Which accounts can be switched
 

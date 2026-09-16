@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { resolvePaths } from '../src/paths.js';
+import { confinedTo, resolvePaths } from '../src/paths.js';
 
 const home = path.join(path.sep, 'home', 'someone');
 
@@ -50,4 +50,52 @@ test('the auth caches live beside the config, and are the regenerable pair', () 
 
 test('resolvePaths is pure: same inputs, equal output, no ambient reads', () => {
   assert.deepEqual(resolvePaths({}, home), resolvePaths({}, home));
+});
+
+test('the renew login dir is made under the temp dir, never inside the store', () => {
+  const tmp = path.join(path.sep, 'tmp');
+  const paths = resolvePaths({}, home, tmp);
+
+  assert.equal(paths.loginScratch, path.join(tmp, 'cc-account-login-'));
+});
+
+test('on Windows the private-window browsers come from the install dirs, Chrome first', () => {
+  const env = {
+    ProgramFiles: 'C:\\Program Files',
+    'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+    LOCALAPPDATA: 'C:\\Users\\someone\\AppData\\Local',
+  };
+  const browsers = resolvePaths(env, home, '/tmp', 'win32').privateBrowsers;
+
+  assert.deepEqual(browsers[0], [path.join('C:\\Program Files', 'Google/Chrome/Application/chrome.exe'), '--incognito']);
+  assert.ok(browsers.some(([exe, flag]) => exe.endsWith('msedge.exe') && flag === '--inprivate'));
+  assert.ok(browsers.some(([exe, flag]) => exe.endsWith('firefox.exe') && flag === '--private-window'));
+});
+
+test('an unset install dir contributes no browser candidates', () => {
+  const browsers = resolvePaths({}, home, '/tmp', 'win32').privateBrowsers;
+
+  assert.deepEqual(browsers, []);
+});
+
+test('on Linux the private-window browsers are looked up on PATH', () => {
+  const env = { PATH: ['/usr/bin', '/snap/bin'].join(path.delimiter) };
+  const browsers = resolvePaths(env, home, '/tmp', 'linux').privateBrowsers;
+
+  assert.deepEqual(browsers[0], [path.join('/usr/bin', 'google-chrome'), '--incognito']);
+  assert.ok(browsers.some(([exe, flag]) => exe === path.join('/snap/bin', 'firefox') && flag === '--private-window'));
+});
+
+test('macOS has no private-window browsers, as renew is not available there', () => {
+  assert.deepEqual(resolvePaths({ PATH: '/usr/bin' }, home, '/tmp', 'darwin').privateBrowsers, []);
+});
+
+test('confinedTo points the config at the dir and keeps the rest of the environment', () => {
+  const dir = path.resolve(path.join(path.sep, 'scratch', 'login'));
+  const { env, paths } = confinedTo(dir, { PATH: '/usr/bin', CLAUDE_CONFIG_DIR: '/live' });
+
+  assert.equal(env.CLAUDE_CONFIG_DIR, dir);
+  assert.equal(env.PATH, '/usr/bin');
+  assert.equal(paths.credentialsFile, path.join(dir, '.credentials.json'));
+  assert.equal(paths.configJson, path.join(dir, '.claude.json'));
 });
