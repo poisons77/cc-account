@@ -46,6 +46,11 @@ const needsFileBackend = {
     'the credential backend is the Keychain on macOS; the sandbox cannot replace it',
 };
 
+/** `renew` refuses macOS before it reads anything, so its own guards are unreachable there. */
+const needsRenew = {
+  skip: process.platform === 'darwin' && 'renew is refused outright on macOS',
+};
+
 let box;
 let paths;
 
@@ -529,7 +534,7 @@ test('a logged-out status names nobody, even if it carries an email', () => {
   assert.equal(loggedInEmail(null), null);
 });
 
-test('renew refuses an unknown account', () => {
+test('renew refuses an unknown account', needsRenew, () => {
   assert.throws(() => renewAccount(paths, 'work'), /Unknown account 'work'/);
 });
 
