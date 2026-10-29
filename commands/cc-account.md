@@ -1,6 +1,6 @@
 ---
-description: Switch the active Claude Code account, rotate to the next one, renew a login, or show which is in use
-argument-hint: "[rotate | current | renew account-name | account-name]"
+description: Switch the active Claude Code account, rotate to the next one, add or renew a login, or show which is in use
+argument-hint: "[rotate | current | add [account-name] | renew account-name | account-name]"
 allowed-tools: Bash(node:*)
 ---
 
@@ -16,10 +16,13 @@ Run exactly one command, matching the first case that applies, then report its o
 - `$1` is `renew`: `node "${CLAUDE_PLUGIN_ROOT}/bin/cc-account.js" renew $2`, with a 10-minute timeout.
   It opens a browser for the sign-in and waits for it, so tell the user a browser window is opening
   before you run it.
+- `$1` is `add`: `node "${CLAUDE_PLUGIN_ROOT}/bin/cc-account.js" add $2`, with a 10-minute timeout.
+  It opens a private browser window for the sign-in and waits for it, so tell the user a browser
+  window is opening and to sign in there as the account to add, before you run it.
 - `$1` is anything else, treat it as an account name:
   `node "${CLAUDE_PLUGIN_ROOT}/bin/cc-account.js" use $1`
 
-`rotate`, `current` and `renew` are reserved: `cc-account save` refuses them, so no account can carry
+`rotate`, `current`, `renew` and `add` are reserved: `cc-account save` refuses them, so no account can carry
 a name this command would swallow.
 
 The switch takes effect on this session's next API call, so no restart is needed.

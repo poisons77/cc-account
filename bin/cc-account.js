@@ -6,6 +6,7 @@ import { resolvePaths } from '../src/paths.js';
 import { usesKeychain } from '../src/credentials.js';
 import {
   accountsWithExpiry,
+  addAccount,
   authStatus,
   EXPIRY_WARNING_MS,
   expiringAccounts,
@@ -26,6 +27,8 @@ const WARNING_DAYS = EXPIRY_WARNING_MS / DAY_MS;
 
 const HELP = `cc-account - switch the active Claude Code account.
 
+  add [name]      Sign a new account in through a private browser window and save it.
+                  The live account stays logged in. Name defaults to the email local part.
   save [name]     Snapshot the logged-in account. Name defaults to the email local part.
   use <name>      Switch to a snapshot. Re-snapshots the outgoing account first.
   rotate          Switch to the account switched away from longest ago.
@@ -74,18 +77,22 @@ const expiryWarning = (account) =>
     ? `Renew: cc-account renew ${account.name}`
     : `Sign in as ${account.meta.email} with /login, then: cc-account save ${account.name}`);
 
+/** Announce the browser a login is about to open. `email` is unset when adding a new account. */
+function announceLogin(browser, email) {
+  const who = email ?? 'the account to add';
+  console.log(
+    browser
+      ? `Opening ${path.basename(browser[0])} to sign in as ${who}.`
+      : `No browser found to open privately. Open the link below in a private window and sign in as ${who}.`,
+  );
+}
+
+const goodUntil = (expiresAt) =>
+  expiresAt ? `, good until ${new Date(expiresAt).toISOString().slice(0, 10)}` : '';
+
 function renew(target) {
-  const result = renewAccount(paths, target, {
-    onLogin: (browser, email) => {
-      console.log(
-        browser
-          ? `Opening ${path.basename(browser[0])} to sign in as ${email}.`
-          : `No browser found to open privately. Open the link below in a private window and sign in as ${email}.`,
-      );
-    },
-  });
-  const until = result.expiresAt ? `, good until ${new Date(result.expiresAt).toISOString().slice(0, 10)}` : '';
-  console.log(`Renewed '${target}'  ->  ${describe(result.status)}${until}`);
+  const result = renewAccount(paths, target, { onLogin: announceLogin });
+  console.log(`Renewed '${target}'  ->  ${describe(result.status)}${goodUntil(result.expiresAt)}`);
   if (result.active) console.log('It is the live account, so the new login is live too.');
 }
 
@@ -129,7 +136,8 @@ async function offerRenewals(activeEmail) {
 function hookOutput(due) {
   const names = due.map((account) => account.name).join(', ');
   const action = canRenew
-    ? 'ask whether to renew each one now. For each one they accept, run ' +
+    ? 'ask whether to renew each one now, with the AskUserQuestion tool: one question per login, ' +
+      'options "Renew now" and "Later". For each one they accept, run ' +
       `\`node "${process.argv[1]}" renew <name>\` with a 10-minute timeout: it opens a browser ` +
       'for the sign-in and waits for it. Report its output.'
     : 'explain that each one needs a /login as that account, followed by `cc-account save <name>`.';
@@ -167,6 +175,13 @@ async function switchTo(target) {
 
 try {
   switch (command) {
+  case 'add': {
+    const result = addAccount(paths, name, { onLogin: announceLogin });
+    console.log(`Added '${result.name}'  <-  ${describe(result.status)}${goodUntil(result.expiresAt)}`);
+    if (!result.active) console.log(`Switch to it: cc-account use ${result.name}`);
+    break;
+  }
+
   case 'save': {
     const { name: saved, status } = saveAccount(paths, name);
     console.log(`Saved '${saved}'  <-  ${describe(status)}`);

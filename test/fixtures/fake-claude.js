@@ -13,8 +13,10 @@ if (command === 'auth' && subcommand === 'login') {
   // The browser round trip, faked: hand BROWSER the sign-in URL, then sign in whichever account
   // the "browser" holds - FAKE_BROWSER_ACCOUNT when set, the hinted email otherwise. An empty
   // FAKE_BROWSER_ACCOUNT is a sign-in the user abandoned.
-  const hint = args[args.indexOf('--email') + 1];
-  const url = `https://claude.example/oauth/authorize?code=true&login_hint=${encodeURIComponent(hint)}`;
+  const hint = args.includes('--email') ? args[args.indexOf('--email') + 1] : undefined;
+  const url =
+    'https://claude.example/oauth/authorize?code=true' +
+    (hint ? `&login_hint=${encodeURIComponent(hint)}` : '');
   if (process.env.BROWSER) {
     spawnSync(`"${process.env.BROWSER}" "${url}"`, { shell: true, stdio: 'ignore' });
   }

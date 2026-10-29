@@ -5,6 +5,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 
 import {
   accountsWithExpiry,
+  addAccount,
   authStatus,
   EXPIRY_WARNING_MS,
   expiringAccounts,
@@ -513,6 +514,101 @@ test('renew refuses an email the Windows shell would rewrite', { skip: process.p
   fs.writeFileSync(metaFile, JSON.stringify({ ...readJson(metaFile), email: '%USERNAME%@example.com' }));
 
   assert.throws(() => renewAccount(paths, 'work'), /Cannot pass %USERNAME%@example\.com to claude/);
+});
+
+test('add saves whoever signs in and leaves the live account alone', needsFileBackend, async () => {
+  login(paths, 'personal@example.com');
+  saveAccount(paths, 'personal');
+  const liveBefore = readFile(paths.credentialsFile);
+  process.env.FAKE_BROWSER_ACCOUNT = 'work@example.com';
+  const out = path.join(box.root, 'opened.json');
+  paths.privateBrowsers = [[process.execPath, recordArgs, out, '--incognito']];
+
+  let announced;
+  const result = addAccount(paths, undefined, { onLogin: (command, email) => (announced = { command, email }) });
+
+  assert.equal(result.name, 'work');
+  assert.equal(result.active, false);
+  assert.equal(announced.email, undefined);
+  assert.equal(readJson(path.join(snapshotDir('work'), '.credentials.json')).refreshToken, 'renewed-for-work@example.com');
+  assert.equal(readJson(path.join(snapshotDir('work'), 'meta.json')).email, 'work@example.com');
+  assert.equal(readFile(paths.credentialsFile), liveBefore);
+  assert.deepEqual(fs.readdirSync(box.tmp), [], 'the throwaway login dir is removed');
+
+  for (let waited = 0; !fs.existsSync(out) && waited < 10_000; waited += 50) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const [flag, url] = readJson(out);
+  assert.equal(flag, '--incognito');
+  assert.doesNotMatch(url, /login_hint/);
+});
+
+test('add stores the login under the name given', needsFileBackend, () => {
+  process.env.FAKE_BROWSER_ACCOUNT = 'me@company.com';
+
+  addAccount(paths, 'work');
+
+  assert.equal(findByEmail(paths, 'me@company.com'), 'work');
+});
+
+test('adding the live account, not yet saved, makes the new login live too', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  process.env.FAKE_BROWSER_ACCOUNT = 'work@example.com';
+
+  const result = addAccount(paths, 'work');
+
+  assert.equal(result.active, true);
+  assert.equal(
+    readFile(paths.credentialsFile),
+    readFile(path.join(snapshotDir('work'), '.credentials.json')),
+  );
+});
+
+test('add refuses a taken or reserved name before opening a browser', needsRenew, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  process.env.FAKE_BROWSER_ACCOUNT = 'other@example.com';
+
+  assert.throws(() => addAccount(paths, 'work'), /'work' already exists\. Nothing was changed\./);
+  assert.throws(() => addAccount(paths, 'add'), /'add' is a \/cc-account subcommand/);
+  assert.deepEqual(fs.readdirSync(box.tmp), [], 'no login was started');
+});
+
+test('add refuses an account that is already saved', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'job');
+  const before = readFile(path.join(snapshotDir('job'), '.credentials.json'));
+  process.env.FAKE_BROWSER_ACCOUNT = 'work@example.com';
+
+  assert.throws(
+    () => addAccount(paths, 'other'),
+    /work@example\.com is already saved as 'job'\. Nothing was changed\. Renew it: cc-account renew job/,
+  );
+  assert.equal(readFile(path.join(snapshotDir('job'), '.credentials.json')), before);
+  assert.equal(fs.existsSync(snapshotDir('other')), false);
+});
+
+test('add refuses when the email local part names an existing account', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths);
+  process.env.FAKE_BROWSER_ACCOUNT = 'work@company.com';
+
+  assert.throws(() => addAccount(paths), /'work' already exists\. Nothing was changed\./);
+  assert.equal(readJson(path.join(snapshotDir('work'), 'meta.json')).email, 'work@example.com');
+});
+
+test('an abandoned add saves nothing', needsFileBackend, () => {
+  process.env.FAKE_BROWSER_ACCOUNT = '';
+
+  assert.throws(() => addAccount(paths), /The login for the new account did not complete\. Nothing was changed\./);
+  assert.deepEqual(listAccounts(paths), []);
+  assert.deepEqual(fs.readdirSync(box.tmp), []);
+});
+
+test('add is refused on macOS, where the login would reach the shared Keychain', {
+  skip: process.platform !== 'darwin' && 'only macOS uses the Keychain',
+}, () => {
+  assert.throws(() => addAccount(paths), /add is not available on macOS/);
 });
 
 test('a .claude.json that cannot be read stops a switch before anything is written', needsFileBackend, () => {

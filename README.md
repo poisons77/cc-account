@@ -52,6 +52,7 @@ command as `/<plugin>:<command>`, so the command is `/cc-account:cc-account`:
 /cc-account:cc-account rotate       switch to the account left longest ago
 /cc-account:cc-account personal     switch to that account
 /cc-account:cc-account current      re-sync identity after a manual /login
+/cc-account:cc-account add work     sign a new account in through the browser and save it
 /cc-account:cc-account renew work   sign that account in again through the browser
 ```
 
@@ -63,8 +64,8 @@ Save this as `~/.claude/commands/cc-account.md`:
 
 ````markdown
 ---
-description: Switch the active Claude Code account, rotate to the next one, renew a login, or show which is in use
-argument-hint: "[rotate | current | renew account-name | account-name]"
+description: Switch the active Claude Code account, rotate to the next one, add or renew a login, or show which is in use
+argument-hint: "[rotate | current | add [account-name] | renew account-name | account-name]"
 allowed-tools: Bash(cc-account:*)
 ---
 
@@ -77,6 +78,8 @@ Run exactly one command, matching the first case that applies, then report its o
 - `$1` is `current`: `cc-account current`
 - `$1` is `renew`: `cc-account renew $2`, with a 10-minute timeout. It opens a browser and waits for
   the sign-in, so say a browser window is opening first.
+- `$1` is `add`: `cc-account add $2`, with a 10-minute timeout. It opens a private browser window and
+  waits for the sign-in, so say a browser window is opening first.
 - `$1` is anything else, treat it as an account name: `cc-account use $1`
 
 Report the resulting account and nothing more.
@@ -90,16 +93,20 @@ the one that tracks releases.
 
 ## Use
 
-Snapshot each account once, right after signing in as it:
+Save the account you are logged in as, then add each other one:
 
 ```console
 $ cc-account save personal
 Saved 'personal'  <-  me@example.com [max]
 
-$ claude auth logout
-$ claude auth login          # sign in as the other account
-$ cc-account save work
+$ cc-account add work
+Opening chrome.exe to sign in as the account to add.
+Added 'work'  <-  me@company.com [max], good until 2026-12-01
+Switch to it: cc-account use work
 ```
+
+`add` signs in through a private browser window and a throwaway config directory, the same way as
+`renew`, so the live account stays logged in throughout. The name defaults to the email local part.
 
 From then on, switching needs no browser:
 
@@ -163,6 +170,7 @@ warning comes from a hook in `~/.claude/settings.json`:
 
 | Command | Effect |
 |---|---|
+| `add [name]` | Sign a new account in through a private browser window and save it, leaving the live account logged in. Name defaults to the email local part. |
 | `save [name]` | Snapshot the logged-in account. Name defaults to the email local part. |
 | `use <name>` | Switch. Re-snapshots the outgoing account first. |
 | `rotate` | Switch to the account switched away from longest ago. |
@@ -173,11 +181,12 @@ warning comes from a hook in `~/.claude/settings.json`:
 | `check` | Name the logins that expire within three days. `--hook` prints it as SessionStart hook output. |
 | `--creds-only` | Swap tokens only, leaving `oauthAccount` untouched. |
 
-`rotate`, `current` and `renew` cannot be used as account names. `save` refuses them, so the
+`rotate`, `current`, `renew` and `add` cannot be used as account names. `save` refuses them, so the
 `/cc-account` slash command can treat them as subcommands without ever hiding an account.
 
 `save` also refuses a name whose snapshot already holds a different email, so one account's token
-never lands under another account's name.
+never lands under another account's name. `add` refuses a name that is already taken, and an
+account that is already saved, which `renew` signs in again instead.
 
 ## Switching on its own
 

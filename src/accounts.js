@@ -22,7 +22,7 @@ const META = 'meta.json';
  * these would be reachable from the CLI but not from the slash command, so it is refused at save
  * time rather than left as a trap to discover later.
  */
-export const RESERVED_NAMES = ['rotate', 'current', 'renew'];
+export const RESERVED_NAMES = ['rotate', 'current', 'renew', 'add'];
 
 /** How far ahead of a login's expiry to start asking for a renewal. Claude Code warns at 3 days. */
 export const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000;
@@ -145,6 +145,14 @@ export function pickRotationTarget(paths) {
   return candidates.sort((a, b) => stamp(a) - stamp(b))[0].name;
 }
 
+function refuseReserved(name) {
+  if (RESERVED_NAMES.includes(name)) {
+    throw new Error(
+      `'${name}' is a /cc-account subcommand and cannot name an account. Pick another name.`,
+    );
+  }
+}
+
 /**
  * Write a snapshot. A snapshot already holding another email is refused: overwriting it would put
  * one account's token under another account's name, and the original is only recoverable through
@@ -154,11 +162,7 @@ export function pickRotationTarget(paths) {
  * orders by, for a write that is not a switch.
  */
 function writeSnapshot(paths, name, { blob, oauthAccount, status }, { keepSavedAt = false } = {}) {
-  if (RESERVED_NAMES.includes(name)) {
-    throw new Error(
-      `'${name}' is a /cc-account subcommand and cannot name an account. Pick another name.`,
-    );
-  }
+  refuseReserved(name);
 
   const dir = accountDir(paths, name);
   const previous = readJsonOr(path.join(dir, META), {});
@@ -268,34 +272,39 @@ export function setBrowser(paths, name, command) {
   writeJsonAtomic(metaFile, command ? { ...meta, browser: command } : meta);
 }
 
+function refuseOnKeychain(command) {
+  if (usesKeychain()) {
+    throw new Error(
+      `${command} is not available on macOS: a login there writes to the shared Keychain, which ` +
+        'cc-account cannot keep apart from the live account.',
+    );
+  }
+}
+
+/** A name `add` may create: not reserved, and not already taken by a snapshot. */
+function refuseTaken(paths, name) {
+  refuseReserved(name);
+  if (fs.existsSync(accountDir(paths, name))) {
+    throw new Error(`'${name}' already exists. Nothing was changed. Renew it: cc-account renew ${name}`);
+  }
+}
+
 /**
- * Sign an account in again, which is the only thing that moves its expiry. The login runs in a
- * throwaway config dir, so the live session is never touched while it is in progress, and its
- * result is kept only if the browser signed in the account being renewed. Renewing the live
- * account also installs the new login, or the next switch away would re-snapshot the old one over
- * it.
+ * Run a browser login in a throwaway config dir, so the live session is never touched while it is
+ * in progress, and return who signed in with the login it left. `email`, when known, is passed as
+ * the login hint; `label` names the login in errors.
  *
  * `onLogin(command, email)` runs just before the login starts; `command` is null when no browser
  * was found.
  */
-export function renewAccount(paths, name, { onLogin = () => {} } = {}) {
-  if (usesKeychain()) {
-    throw new Error(
-      'renew is not available on macOS: a login there writes to the shared Keychain, which ' +
-        'cc-account cannot keep apart from the live account.',
-    );
-  }
-
-  const meta = requireSnapshot(paths, name);
-  if (!meta.email) throw new Error(`'${name}' has no email on record to sign in as.`);
-
-  const command = browserCommand(paths, meta);
+function browserLogin(paths, { email, browser, label, onLogin }) {
+  const command = browserCommand(paths, { browser });
   sweepStaleScratch(paths);
   const scratch = fs.mkdtempSync(paths.loginScratch);
   try {
     const confined = confinedTo(scratch);
-    onLogin(command, meta.email);
-    runClaude(['auth', 'login', '--email', meta.email], {
+    onLogin(command, email);
+    runClaude(['auth', 'login', ...(email ? ['--email', email] : [])], {
       stdio: 'inherit',
       env: {
         ...confined.env,
@@ -306,31 +315,85 @@ export function renewAccount(paths, name, { onLogin = () => {} } = {}) {
 
     const status = authStatus(confined.env);
     if (!status?.loggedIn) {
-      throw new Error(`The login for '${name}' did not complete. Nothing was changed.`);
-    }
-    if (status.email !== meta.email) {
-      throw new Error(
-        `The browser signed in ${status.email}, not ${meta.email}. Nothing was changed. ` +
-          `Sign in there as ${meta.email}, or give '${name}' its own browser: ` +
-          `cc-account browser ${name} <command>`,
-      );
+      throw new Error(`The login for ${label} did not complete. Nothing was changed.`);
     }
 
     const blob = readCredentials(confined.paths);
-    if (!blob) throw new Error(`The login for '${name}' left no credentials. Nothing was changed.`);
+    if (!blob) throw new Error(`The login for ${label} left no credentials. Nothing was changed.`);
 
-    const login = { blob, oauthAccount: readJsonOr(confined.paths.configJson, {}).oauthAccount };
-
-    // Live first, then the snapshot. If renew dies in between, the next switch away re-snapshots
-    // the new live login; the other order would have it re-snapshot the old one over the new.
-    const active = loggedInEmail(authStatus()) === meta.email;
-    if (active) installLogin(paths, name, login);
-    writeSnapshot(paths, name, { ...login, status }, { keepSavedAt: true });
-
-    return { status, active, expiresAt: refreshTokenExpiry(blob) };
+    return {
+      status,
+      login: { blob, oauthAccount: readJsonOr(confined.paths.configJson, {}).oauthAccount },
+    };
   } finally {
     removeScratch(scratch);
   }
+}
+
+/**
+ * Store a fresh browser login as account `name`. When it is the live account the login is
+ * installed too, or the next switch away would re-snapshot the old one over it.
+ */
+function keepLogin(paths, name, { status, login }, snapshotOptions) {
+  // Live first, then the snapshot. If this dies in between, the next switch away re-snapshots
+  // the new live login; the other order would have it re-snapshot the old one over the new.
+  const active = loggedInEmail(authStatus()) === status.email;
+  if (active) installLogin(paths, name, login);
+  writeSnapshot(paths, name, { ...login, status }, snapshotOptions);
+  return { name, status, active, expiresAt: refreshTokenExpiry(login.blob) };
+}
+
+/**
+ * Sign an account in again, which is the only thing that moves its expiry. The result is kept
+ * only if the browser signed in the account being renewed.
+ */
+export function renewAccount(paths, name, { onLogin = () => {} } = {}) {
+  refuseOnKeychain('renew');
+
+  const meta = requireSnapshot(paths, name);
+  if (!meta.email) throw new Error(`'${name}' has no email on record to sign in as.`);
+
+  const signedIn = browserLogin(paths, {
+    email: meta.email,
+    browser: meta.browser,
+    label: `'${name}'`,
+    onLogin,
+  });
+  if (signedIn.status.email !== meta.email) {
+    throw new Error(
+      `The browser signed in ${signedIn.status.email}, not ${meta.email}. Nothing was changed. ` +
+        `Sign in there as ${meta.email}, or give '${name}' its own browser: ` +
+        `cc-account browser ${name} <command>`,
+    );
+  }
+
+  return keepLogin(paths, name, signedIn, { keepSavedAt: true });
+}
+
+/**
+ * Sign a new account in through a private browser window and save it, without logging out of the
+ * live one. The name defaults to the email local part of whoever signs in.
+ */
+export function addAccount(paths, name, { onLogin = () => {} } = {}) {
+  refuseOnKeychain('add');
+  if (name) refuseTaken(paths, name);
+
+  const signedIn = browserLogin(paths, {
+    label: name ? `'${name}'` : 'the new account',
+    onLogin,
+  });
+  const { email } = signedIn.status;
+  const existing = findByEmail(paths, email);
+  if (existing) {
+    throw new Error(
+      `${email} is already saved as '${existing}'. Nothing was changed. ` +
+        `Renew it: cc-account renew ${existing}`,
+    );
+  }
+
+  const resolved = name || slugify(email);
+  if (!name) refuseTaken(paths, resolved);
+  return keepLogin(paths, resolved, signedIn);
 }
 
 /** How old a login dir must be before a later renew treats it as abandoned. */
