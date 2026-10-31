@@ -10,6 +10,7 @@ import {
   writeCredentials,
 } from './credentials.js';
 import { readJsonIfPresent, readJsonOr, writeFileAtomic, writeJsonAtomic } from './jsonFile.js';
+import { joinRotation, leaveRotation } from './paceRotation.js';
 import { confinedTo } from './paths.js';
 import { writeRotationState } from './rotationState.js';
 
@@ -22,7 +23,7 @@ const META = 'meta.json';
  * these would be reachable from the CLI but not from the slash command, so it is refused at save
  * time rather than left as a trap to discover later.
  */
-export const RESERVED_NAMES = ['rotate', 'current', 'renew', 'add'];
+export const RESERVED_NAMES = ['rotate', 'current', 'renew', 'add', 'remove'];
 
 /** How far ahead of a login's expiry to start asking for a renewal. Claude Code warns at 3 days. */
 export const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000;
@@ -192,6 +193,18 @@ function writeSnapshot(paths, name, { blob, oauthAccount, status }, { keepSavedA
   });
 }
 
+/**
+ * Update cc-pace's rotation list after the store changed. The store change has already happened,
+ * so a cc-pace config that cannot be read is reported rather than thrown.
+ */
+function syncRotation(update, paths, name, changed) {
+  try {
+    return update(paths, name) ? changed : null;
+  } catch {
+    return 'unreadable';
+  }
+}
+
 export function saveAccount(paths, name) {
   const status = authStatus();
   if (!status?.loggedIn) throw new Error('Not logged in. Run `claude auth login` first.');
@@ -200,13 +213,29 @@ export function saveAccount(paths, name) {
   if (!blob) throw new Error('No stored credentials found to snapshot.');
 
   const resolved = name || slugify(status.email);
+  const isNew = !fs.existsSync(accountDir(paths, resolved));
   writeSnapshot(paths, resolved, {
     blob,
     oauthAccount: readJsonOr(paths.configJson, {}).oauthAccount,
     status,
   });
 
-  return { name: resolved, status };
+  const rotation = isNew ? syncRotation(joinRotation, paths, resolved, 'joined') : null;
+  return { name: resolved, status, rotation };
+}
+
+/**
+ * Delete a snapshot and take it out of cc-pace's rotation. The live account is refused: its
+ * snapshot would come straight back on the next switch away.
+ */
+export function removeAccount(paths, name) {
+  const meta = requireSnapshot(paths, name);
+  if (meta.email && loggedInEmail(authStatus()) === meta.email) {
+    throw new Error(`'${name}' is the live account. Switch away from it first, then remove it.`);
+  }
+
+  fs.rmSync(accountDir(paths, name), { recursive: true, force: true });
+  return { email: meta.email ?? null, rotation: syncRotation(leaveRotation, paths, name, 'left') };
 }
 
 /**
@@ -393,7 +422,8 @@ export function addAccount(paths, name, { onLogin = () => {} } = {}) {
 
   const resolved = name || slugify(email);
   if (!name) refuseTaken(paths, resolved);
-  return keepLogin(paths, resolved, signedIn);
+  const result = keepLogin(paths, resolved, signedIn);
+  return { ...result, rotation: syncRotation(joinRotation, paths, resolved, 'joined') };
 }
 
 /** How old a login dir must be before a later renew treats it as abandoned. */

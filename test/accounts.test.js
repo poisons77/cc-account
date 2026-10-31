@@ -13,6 +13,7 @@ import {
   listAccounts,
   loggedInEmail,
   pickRotationTarget,
+  removeAccount,
   renewAccount,
   RESERVED_NAMES,
   saveAccount,
@@ -609,6 +610,83 @@ test('add is refused on macOS, where the login would reach the shared Keychain',
   skip: process.platform !== 'darwin' && 'only macOS uses the Keychain',
 }, () => {
   assert.throws(() => addAccount(paths), /add is not available on macOS/);
+});
+
+const writePace = (config) => {
+  fs.mkdirSync(path.dirname(paths.paceConfig), { recursive: true });
+  fs.writeFileSync(paths.paceConfig, JSON.stringify(config));
+};
+const paceRule = { accounts: ['work'], buckets: { five_hour: 95 }, command: 'cc-account' };
+
+test('a new account joins the cc-pace rotation, leaving the rest of its config alone', needsFileBackend, () => {
+  writePace({ segments: ['five_hour'], rotation: paceRule });
+  process.env.FAKE_BROWSER_ACCOUNT = 'cinzia@example.com';
+
+  const added = addAccount(paths);
+  login(paths, 'personal@example.com');
+  const saved = saveAccount(paths, 'personal');
+
+  assert.equal(added.rotation, 'joined');
+  assert.equal(saved.rotation, 'joined');
+  assert.deepEqual(readJson(paths.paceConfig), {
+    segments: ['five_hour'],
+    rotation: { ...paceRule, accounts: ['work', 'cinzia', 'personal'] },
+  });
+});
+
+test('re-saving an account leaves the cc-pace list as it is', needsFileBackend, () => {
+  writePace({ rotation: { ...paceRule, accounts: ['personal'] } });
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  writePace({ rotation: { ...paceRule, accounts: ['personal'] } });
+
+  assert.equal(saveAccount(paths, 'work').rotation, null);
+  assert.deepEqual(readJson(paths.paceConfig).rotation.accounts, ['personal']);
+});
+
+test('cc-pace is left alone with no config, or with a primary-and-fallback rule', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  assert.equal(saveAccount(paths, 'work').rotation, null);
+  assert.equal(fs.existsSync(paths.paceConfig), false);
+
+  const reserve = { rotation: { primary: 'work', fallback: 'personal' } };
+  writePace(reserve);
+  login(paths, 'personal@example.com');
+  assert.equal(saveAccount(paths, 'personal').rotation, null);
+  assert.deepEqual(readJson(paths.paceConfig), reserve);
+});
+
+test('a cc-pace config that cannot be read is reported, never written over', needsFileBackend, () => {
+  fs.mkdirSync(path.dirname(paths.paceConfig), { recursive: true });
+  fs.writeFileSync(paths.paceConfig, '{ "rotation": torn');
+  login(paths, 'work@example.com');
+
+  assert.equal(saveAccount(paths, 'work').rotation, 'unreadable');
+  assert.equal(readFile(paths.paceConfig), '{ "rotation": torn');
+  assert.equal(findByEmail(paths, 'work@example.com'), 'work');
+});
+
+test('remove deletes the snapshot and takes it out of the cc-pace rotation', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  login(paths, 'personal@example.com');
+  saveAccount(paths, 'personal');
+  writePace({ rotation: { ...paceRule, accounts: ['work', 'personal'] } });
+
+  const result = removeAccount(paths, 'work');
+
+  assert.deepEqual(result, { email: 'work@example.com', rotation: 'left' });
+  assert.equal(fs.existsSync(snapshotDir('work')), false);
+  assert.deepEqual(readJson(paths.paceConfig).rotation.accounts, ['personal']);
+});
+
+test('remove refuses the live account and an unknown one', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+
+  assert.throws(() => removeAccount(paths, 'work'), /'work' is the live account\. Switch away from it first/);
+  assert.ok(fs.existsSync(snapshotDir('work')));
+  assert.throws(() => removeAccount(paths, 'gone'), /Unknown account 'gone'/);
 });
 
 test('a .claude.json that cannot be read stops a switch before anything is written', needsFileBackend, () => {

@@ -14,6 +14,7 @@ import {
   listAccounts,
   loggedInEmail,
   pickRotationTarget,
+  removeAccount,
   renewAccount,
   saveAccount,
   setBrowser,
@@ -30,6 +31,7 @@ const HELP = `cc-account - switch the active Claude Code account.
   add [name]      Sign a new account in through a private browser window and save it.
                   The live account stays logged in. Name defaults to the email local part.
   save [name]     Snapshot the logged-in account. Name defaults to the email local part.
+  remove <name>   Delete a snapshot. The live account cannot be removed.
   use <name>      Switch to a snapshot. Re-snapshots the outgoing account first.
   rotate          Switch to the account switched away from longest ago.
   list            Show snapshots and when each login expires; * marks the active one.
@@ -43,7 +45,8 @@ const HELP = `cc-account - switch the active Claude Code account.
 Options:
   --creds-only    Swap credentials only, leaving oauthAccount untouched.
 
-Running sessions pick up the new account on their next API call. No restart needed.`;
+Running sessions pick up the new account on their next API call. No restart needed.
+add, save and remove keep cc-pace's rotation.accounts list in step, when it has one.`;
 
 const paths = resolvePaths();
 const [command = 'help', ...rest] = process.argv.slice(2);
@@ -89,6 +92,17 @@ function announceLogin(browser, email) {
 
 const goodUntil = (expiresAt) =>
   expiresAt ? `, good until ${new Date(expiresAt).toISOString().slice(0, 10)}` : '';
+
+const ROTATION_NOTES = {
+  joined: (account) => `'${account}' joins the cc-pace rotation.`,
+  left: (account) => `'${account}' leaves the cc-pace rotation.`,
+  unreadable: (account) =>
+    `! cc-pace's config could not be read, so its rotation list was not updated for '${account}'.`,
+};
+
+function reportRotation(rotation, account) {
+  if (rotation) console.log(ROTATION_NOTES[rotation](account));
+}
 
 function renew(target) {
   const result = renewAccount(paths, target, { onLogin: announceLogin });
@@ -178,13 +192,23 @@ try {
   case 'add': {
     const result = addAccount(paths, name, { onLogin: announceLogin });
     console.log(`Added '${result.name}'  <-  ${describe(result.status)}${goodUntil(result.expiresAt)}`);
+    reportRotation(result.rotation, result.name);
     if (!result.active) console.log(`Switch to it: cc-account use ${result.name}`);
     break;
   }
 
   case 'save': {
-    const { name: saved, status } = saveAccount(paths, name);
+    const { name: saved, status, rotation } = saveAccount(paths, name);
     console.log(`Saved '${saved}'  <-  ${describe(status)}`);
+    reportRotation(rotation, saved);
+    break;
+  }
+
+  case 'remove': {
+    if (!name) die('Usage: cc-account remove <name>');
+    const { email, rotation } = removeAccount(paths, name);
+    console.log(`Removed '${name}'${email ? `  (${email})` : ''}`);
+    reportRotation(rotation, name);
     break;
   }
 

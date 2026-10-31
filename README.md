@@ -44,22 +44,21 @@ Or as a Claude Code plugin, which needs no `PATH` entry and adds a slash command
 /plugin install cc-account@cc-account
 ```
 
-Restart the session; commands are enumerated at startup. Claude Code namespaces every plugin
-command as `/<plugin>:<command>`, so the command is `/cc-account:cc-account`:
+Restart the session; the command registers at startup:
 
 ```
-/cc-account:cc-account              list snapshots
-/cc-account:cc-account rotate       switch to the account left longest ago
-/cc-account:cc-account personal     switch to that account
-/cc-account:cc-account current      re-sync identity after a manual /login
-/cc-account:cc-account add work     sign a new account in through the browser and save it
-/cc-account:cc-account renew work   sign that account in again through the browser
+/cc-account              list snapshots
+/cc-account rotate       switch to the account left longest ago
+/cc-account personal     switch to that account
+/cc-account current      re-sync identity after a manual /login
+/cc-account add work     sign a new account in through the browser and save it
+/cc-account renew work   sign that account in again through the browser
 ```
 
 The plugin also checks every saved login when a session starts, and names any that expire within
 three days.
 
-With the npm install, a command file of your own gives the shorter `/cc-account`, in every project.
+With the npm install alone, a command file of your own gives `/cc-account` in every project.
 Save this as `~/.claude/commands/cc-account.md`:
 
 ````markdown
@@ -85,8 +84,7 @@ Run exactly one command, matching the first case that applies, then report its o
 Report the resulting account and nothing more.
 ````
 
-Commands outside a plugin carry no namespace, which is what shortens the name. It calls `cc-account`
-on `PATH`, so it needs the npm install rather than the plugin one.
+It calls `cc-account` on `PATH`, so it needs the npm install rather than the plugin one.
 
 Plugins do not auto-update. `/plugin update cc-account` pulls a newer commit; the npm install is
 the one that tracks releases.
@@ -172,6 +170,7 @@ warning comes from a hook in `~/.claude/settings.json`:
 |---|---|
 | `add [name]` | Sign a new account in through a private browser window and save it, leaving the live account logged in. Name defaults to the email local part. |
 | `save [name]` | Snapshot the logged-in account. Name defaults to the email local part. |
+| `remove <name>` | Delete a snapshot. The live account cannot be removed. |
 | `use <name>` | Switch. Re-snapshots the outgoing account first. |
 | `rotate` | Switch to the account switched away from longest ago. |
 | `list` | Show snapshots and when each login expires; `*` marks the active one. |
@@ -181,7 +180,7 @@ warning comes from a hook in `~/.claude/settings.json`:
 | `check` | Name the logins that expire within three days. `--hook` prints it as SessionStart hook output. |
 | `--creds-only` | Swap tokens only, leaving `oauthAccount` untouched. |
 
-`rotate`, `current`, `renew` and `add` cannot be used as account names. `save` refuses them, so the
+`rotate`, `current`, `renew`, `add` and `remove` cannot be used as account names. `save` refuses them, so the
 `/cc-account` slash command can treat them as subcommands without ever hiding an account.
 
 `save` also refuses a name whose snapshot already holds a different email, so one account's token
@@ -231,8 +230,13 @@ Session: 95% (2h18m) | Weekly: 67% (4d20h) | → switching to personal
 Session: 2% (5h0m)   | Weekly: 61% (4d2h)  | ✓ on personal
 ```
 
+`add`, `save` and `remove` keep that `accounts` list in step: a new account joins it and a removed
+one leaves it, and nothing else in the file changes. cc-account finds the file where cc-pace does,
+through `CC_PACE_CONFIG` or `XDG_CONFIG_HOME`.
+
 Name `primary` and `fallback` instead of `accounts` for a reserve you return to rather than peers
-you rotate between. Both shapes call `cc-account use <name>`, so the snapshots must exist first.
+you rotate between. cc-account leaves that shape alone. Both shapes call `cc-account use <name>`, so
+the snapshots must exist first.
 
 Setup, the identity file this publishes, and the limits: [`docs/rotation.md`](docs/rotation.md).
 

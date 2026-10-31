@@ -9,6 +9,9 @@ packtest/
 
 .env*
 
+# Written by Claude Code when it loads the hooks module.
+.claude-plugin/types/
+
 # Conventions, review agents and research: this machine only.
 .claude/
 

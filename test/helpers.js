@@ -38,6 +38,7 @@ export function sandbox() {
   const saved = {
     CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
     CC_ACCOUNT_HOME: process.env.CC_ACCOUNT_HOME,
+    CC_PACE_CONFIG: process.env.CC_PACE_CONFIG,
     PATH: process.env.PATH,
     FAKE_BROWSER_ACCOUNT: process.env.FAKE_BROWSER_ACCOUNT,
     FAKE_RENEWED_EXPIRY: process.env.FAKE_RENEWED_EXPIRY,
@@ -45,6 +46,8 @@ export function sandbox() {
 
   process.env.CLAUDE_CONFIG_DIR = path.join(root, 'config');
   process.env.CC_ACCOUNT_HOME = path.join(root, 'store');
+  // Never the real cc-pace config: add and save would write its rotation list.
+  process.env.CC_PACE_CONFIG = path.join(root, 'cc-pace', 'config.json');
   process.env.PATH = `${binDir}${path.delimiter}${saved.PATH}`;
 
   const tmp = path.join(root, 'tmp');

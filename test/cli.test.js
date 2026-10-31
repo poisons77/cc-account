@@ -51,6 +51,7 @@ test('check --hook tells the user, and tells Claude how to renew', needsFileBack
   );
   assert.equal(output.hookSpecificOutput.hookEventName, 'SessionStart');
   assert.match(output.hookSpecificOutput.additionalContext, /expire soon: personal\./);
+  assert.match(output.hookSpecificOutput.additionalContext, /with the AskUserQuestion tool/);
   assert.match(output.hookSpecificOutput.additionalContext, /renew <name>` with a 10-minute timeout/);
 });
 

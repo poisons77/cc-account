@@ -39,6 +39,14 @@ test('CC_ACCOUNT_HOME relocates the store and nothing else', () => {
   assert.equal(paths.configDir, path.join(home, '.claude'));
 });
 
+test('the cc-pace config is found where cc-pace looks for it', () => {
+  assert.equal(resolvePaths({}, home).paceConfig, path.join(home, '.config', 'cc-pace', 'config.json'));
+  const xdg = path.join(path.sep, 'xdg');
+  assert.equal(resolvePaths({ XDG_CONFIG_HOME: xdg }, home).paceConfig, path.join(xdg, 'cc-pace', 'config.json'));
+  const pinned = path.join(path.sep, 'pace.json');
+  assert.equal(resolvePaths({ CC_PACE_CONFIG: pinned, XDG_CONFIG_HOME: xdg }, home).paceConfig, pinned);
+});
+
 test('the auth caches live beside the config, and are the regenerable pair', () => {
   const paths = resolvePaths({}, home);
 
