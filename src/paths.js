@@ -18,15 +18,22 @@ export function resolvePaths(
     ? path.join(configDir, '.claude.json')
     : path.join(home, '.claude.json');
 
+  // cc-pace's config, resolved the way cc-pace resolves it, so its rotation list follows the store.
+  const paceConfig =
+    env.CC_PACE_CONFIG ??
+    path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'cc-pace', 'config.json');
+  const store = env.CC_ACCOUNT_HOME ?? path.join(home, '.claude-accounts');
+
   return {
     configDir,
     configJson,
     credentialsFile: path.join(configDir, '.credentials.json'),
-    store: env.CC_ACCOUNT_HOME ?? path.join(home, '.claude-accounts'),
-    // cc-pace's config, resolved the way cc-pace resolves it, so its rotation list follows the store.
-    paceConfig:
-      env.CC_PACE_CONFIG ??
-      path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'cc-pace', 'config.json'),
+    store,
+    // cc-account's own settings, those that belong to no account and not to cc-pace.
+    settings: path.join(store, 'settings.json'),
+    paceConfig,
+    // cc-pace's rotation engine state, beside its config: the account ranking `rotate` follows.
+    paceState: path.join(path.dirname(paceConfig), 'rotation-state.json'),
     // Regenerable caches. A stale one reports the previous account.
     authCaches: [
       path.join(configDir, 'daemon-auth-status.json'),

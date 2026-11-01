@@ -1,7 +1,8 @@
 # cc-account
 
-Switch the active Claude Code account from the command line. No browser, no magic link, no
-re-authorization - until a login expires, and then one command signs that account in again.
+Switch the active Claude Code account in one command, and keep working when one hits its usage
+limit. No browser, no magic link, no re-authorization - until a login expires, and then one command
+signs that account in again. Zero dependencies; install from npm or as a Claude Code plugin.
 
 ![cc-account use work: the outgoing account is saved, then the terminal reports it is now on work,
 me@company.com, on a max plan](docs/images/switch.svg)
@@ -48,15 +49,17 @@ Restart the session; the command registers at startup:
 
 ```
 /cc-account              list snapshots
-/cc-account rotate       switch to the account left longest ago
+/cc-account rotate       switch to the best next account
 /cc-account personal     switch to that account
 /cc-account current      re-sync identity after a manual /login
 /cc-account add work     sign a new account in through the browser and save it
 /cc-account renew work   sign that account in again through the browser
+/cc-account config       open the settings menu: arrows move, Enter picks
 ```
 
 The plugin also checks every saved login when a session starts, and names any that expire within
-three days.
+three days. A login in its last hour shows in red above the prompt of every session until it is
+renewed.
 
 With the npm install alone, a command file of your own gives `/cc-account` in every project.
 Save this as `~/.claude/commands/cc-account.md`:
@@ -172,32 +175,49 @@ warning comes from a hook in `~/.claude/settings.json`:
 | `save [name]` | Snapshot the logged-in account. Name defaults to the email local part. |
 | `remove <name>` | Delete a snapshot. The live account cannot be removed. |
 | `use <name>` | Switch. Re-snapshots the outgoing account first. |
-| `rotate` | Switch to the account switched away from longest ago. |
-| `list` | Show snapshots and when each login expires; `*` marks the active one. |
+| `rotate` | Switch to the account cc-pace ranks best; without cc-pace, to the one switched away from longest ago. |
+| `list` | Show snapshots and when each login expires; `*` marks the active one. With cc-pace, also each account's use and the forecast for all of them. |
 | `current` | Show who is logged in now, and re-publish it after a manual `/login`. |
 | `renew <name>` | Sign that account in again through the browser, resetting its expiry. |
 | `browser <name> [command]` | Set the browser `renew` opens for that account; no command shows it, `--reset` returns to a private window. |
-| `check` | Name the logins that expire within three days. `--hook` prints it as SessionStart hook output. |
+| `check` | Name the logins that expire within three days. `--hook` prints it as SessionStart hook output; `--json` prints every alert the plugin draws. |
+| `config` | Show the rotation, notice and sign-in settings. `config set <key> <value>` changes one; the plugin's `/cc-account config` is the same list as a menu. |
 | `--creds-only` | Swap tokens only, leaving `oauthAccount` untouched. |
 
-`rotate`, `current`, `renew`, `add` and `remove` cannot be used as account names. `save` refuses them, so the
+`rotate`, `current`, `renew`, `add`, `remove` and `config` cannot be used as account names. `save` refuses them, so the
 `/cc-account` slash command can treat them as subcommands without ever hiding an account.
 
 `save` also refuses a name whose snapshot already holds a different email, so one account's token
 never lands under another account's name. `add` refuses a name that is already taken, and an
 account that is already saved, which `renew` signs in again instead.
 
-## Switching on its own
+## With cc-pace
 
-cc-account switches when told to. It has no opinion about *when*, because it never sees your usage:
-it reads local files and asks `claude auth status` who is logged in. Deciding the moment needs the
-rate-limit windows, and those arrive in the Claude Code statusline payload, which is
-[cc-pace](https://github.com/poisons77/cc-pace)'s input.
+cc-account and [cc-pace](https://github.com/poisons77/cc-pace) are two separate tools, each
+complete on its own. Installed together, they become one: **cc-pace watches usage and decides where
+to go; cc-account switches and keeps logins alive.**
 
-Each tool stands alone. cc-account switches on demand with no statusline installed, and cc-pace
-renders usage whether or not you own a second account. Together they close the loop: cc-pace decides
-*when*, cc-account performs the switch and publishes *who* is live, which is the identity the
-payload does not carry and cc-pace cannot otherwise know.
+| | Alone | Together |
+|---|---|---|
+| cc-account | Saves, switches, renews and adds accounts; warns before a login ends; `rotate` picks the account switched away from longest ago. | `rotate` follows cc-pace's ranking; `list` adds each account's use and the forecast for all of them; every session hears when all accounts run out and when work can resume. |
+| cc-pace | Shows usage, pace and burn in the status line. | Switches accounts by itself before one runs dry, skips any login in its last hour, and forecasts whether the quota of all accounts lasts until the resets. |
+
+Each holds what the other cannot see. cc-account never sees usage: it reads local files and asks
+`claude auth status` who is logged in. The rate-limit windows arrive in the Claude Code status line
+payload, which is cc-pace's input - and that payload carries no account identity, which cc-account
+publishes on every switch, with the date each login ends.
+
+```
+* work      me@company.com  [max]  weekly 8%, resets Sun 8 Nov 07:00  login expires in 7d
+  personal  me@example.com  [max]  weekly 99%, resets Sun 1 Nov 23:00  login expires in 25d
+
+Burning 2.40x; 2 accounts sustain 2.0x. At this pace every account runs out Sat 7 Nov 14:00, back Sun 8 Nov 07:00.
+```
+
+With the plugin, when no account has quota left, every open session shows it in red above the
+prompt, with the account that frees up first, and says so again the moment one has quota. Each
+session tells itself, so no model is woken to spend the quota that is gone. Turn it off with
+`cc-account config set sessionNotices off`, or from `/cc-account config`.
 
 Install cc-pace, then connect them at one of two depths.
 
@@ -210,7 +230,8 @@ percentage, in `~/.config/cc-pace/config.json`:
 }
 ```
 
-`rotate` picks the account switched away from longest ago, so no account names appear in the config.
+`rotate` picks the account switched away from longest ago, or the one the rotation engine below
+ranks best while it runs, so no account names appear in the config.
 
 **The rotation engine.** Watches several windows, picks a target on what it knows of each account,
 and reports the outcome in the status line:

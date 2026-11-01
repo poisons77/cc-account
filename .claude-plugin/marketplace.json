@@ -1,6 +1,6 @@
 {
   "name": "cc-account",
-  "description": "Account switching for Claude Code: save each login once, then swap between them without a browser.",
+  "description": "Account switching for Claude Code: save each login once, swap between them without a browser, and keep working when one hits its usage limit.",
   "owner": {
     "name": "Giovanni Sasso",
     "email": "gsasso.dev@gmail.com"
@@ -9,7 +9,7 @@
     {
       "name": "cc-account",
       "source": "./",
-      "description": "Switch the active Claude Code account without a browser login."
+      "description": "Switch Claude Code accounts with one command and keep working when one hits its usage limit."
     }
   ]
 }

@@ -6,8 +6,8 @@ performs the switch and publishes which account is live.
 
 Neither tool needs the other. cc-account switches on demand with no statusline installed; cc-pace
 renders usage with one account. The pairing exists because each holds half of what an automatic
-switch needs: cc-pace sees the rate-limit windows and cc-account can act on them and say who is now
-live.
+switch needs: cc-pace sees the rate-limit windows and cc-account can act on them, say who is now
+live, and say until when each login works.
 
 ## Install cc-pace
 
@@ -38,7 +38,8 @@ about accounts. In `~/.config/cc-pace/config.json`:
 }
 ```
 
-`rotate` moves to the account switched away from longest ago, so no names appear in the config and
+`rotate` moves to the account switched away from longest ago, or to the one the rotation engine
+ranks best while it runs, so no names appear in the config and
 nothing is stored beyond a latch that clears when the window resets. This is the whole integration
 for a two-account setup that only needs to get off a spent window.
 
@@ -92,12 +93,28 @@ The statusline payload carries `session_id`, `cwd`, `model`, `cost`, `context_wi
 `rate_limits` - and **no account identity**. Nothing in it says whose limits are being rendered, so
 a status line cannot know which account it is looking at.
 
-cc-account writes the answer on every switch:
+cc-account writes the answer on every switch, with the unix second each saved login stops
+refreshing, rewritten whenever a snapshot or the live login changes:
 
 ```
 ~/.claude-accounts/rotation-state.json
-{ "active": "personal", "email": "…", "switchedAt": 1786412323 }
+{ "active": "personal", "email": "…", "switchedAt": 1786412323,
+  "logins": { "personal": 1788900000, "work": 1789500000 } }
 ```
+
+The engine skips an account whose login ends within the hour, the same hour in which cc-account
+alerts in red.
+
+## What cc-account reads back
+
+cc-pace publishes its judgement in its own `rotation-state.json`, beside its config, and cc-account
+only reads it, for six hours after cc-pace last wrote it:
+
+- `ranking`: every account, best first. `rotate` takes the first eligible one that is not live.
+- `forecast`: when the quota of all accounts together runs out at the current burn, shown by `list`.
+
+When no ranked account is eligible, every session with the plugin is told so in red, with the
+account that frees up first, and told again when one has quota.
 
 Point cc-pace elsewhere with its `store` field if `CC_ACCOUNT_HOME` moves the snapshots.
 
@@ -114,7 +131,7 @@ Run this any time the status line names an account you are not on.
 
 ## Rotating without cc-pace
 
-`rotate` switches to the account switched away from longest ago:
+With no ranking to follow, `rotate` switches to the account switched away from longest ago:
 
 ```console
 $ cc-account rotate
@@ -142,11 +159,15 @@ On Linux and macOS the same job is a `systemd` timer, a `launchd` agent, or an `
 Rotation runs **when the status line renders**. A threshold crossed during a long subagent run is
 missed until the next main-loop turn.
 
-The engine does not check whether the fallback is worth switching to before moving. With both
-accounts near their weekly caps it moves anyway, then reports `! both limited`.
+With primary and fallback, the engine does not check whether the fallback is worth switching to
+before moving. With both accounts near their weekly caps it moves anyway, then reports
+`! both limited`. Peers move only to an account the ranking calls eligible.
 
 Two sessions can cross a threshold at the same moment and both fire. The second lands on an
 account that is already active and stops without writing.
 
-An account whose login has expired is still a rotation target, and switching to it leaves Claude
-Code logged out. `cc-account list` shows every expiry; `cc-account renew <name>` resets one.
+The cheap link has no ranking, so `rotate` there can land on an account that is spent or whose
+login has ended. `cc-account list` shows every expiry; `cc-account renew <name>` resets one.
+
+An account never live since cc-pace started is counted as full in the ranking and the forecast,
+until its first turn shows its real use.

@@ -176,7 +176,57 @@ test('rotate picks the account switched away from longest ago', needsFileBackend
   backdate('personal', '2026-06-01T00:00:00.000Z');
 
   // third is active, so the oldest of the other two wins.
-  assert.equal(pickRotationTarget(paths), 'work');
+  assert.deepEqual(pickRotationTarget(paths), { name: 'work', by: 'oldest' });
+});
+
+const publishRanking = (accounts, at = Math.floor(Date.now() / 1000)) => {
+  fs.mkdirSync(path.dirname(paths.paceState), { recursive: true });
+  fs.writeFileSync(paths.paceState, JSON.stringify({ phase: 'idle', ranking: { at, accounts } }));
+};
+
+const threeSaved = () => {
+  for (const who of ['work', 'personal', 'third']) {
+    login(paths, `${who}@example.com`);
+    saveAccount(paths, who);
+  }
+};
+
+test('rotate follows a fresh cc-pace ranking over the oldest snapshot', needsFileBackend, () => {
+  threeSaved();
+  backdate('work', '2026-01-01T00:00:00.000Z');
+  publishRanking([
+    { name: 'third', eligible: true, reason: null, room: 90, spare: 40 },
+    { name: 'work', eligible: false, reason: 'spent', room: 0, spare: -10 },
+    { name: 'personal', eligible: true, reason: null, room: 60, spare: 12 },
+  ]);
+
+  // third is live, work is spent, so the best eligible other account wins.
+  assert.deepEqual(pickRotationTarget(paths), { name: 'personal', by: 'cc-pace' });
+});
+
+test('a stale or missing ranking falls back to the oldest snapshot', needsFileBackend, () => {
+  threeSaved();
+  backdate('work', '2026-01-01T00:00:00.000Z');
+  publishRanking(
+    [{ name: 'personal', eligible: true, reason: null, room: 90, spare: 40 }],
+    Math.floor(Date.now() / 1000) - 7 * 3600,
+  );
+
+  assert.deepEqual(pickRotationTarget(paths), { name: 'work', by: 'oldest' });
+
+  fs.writeFileSync(paths.paceState, '{ torn');
+  assert.deepEqual(pickRotationTarget(paths), { name: 'work', by: 'oldest' });
+});
+
+test('rotate refuses when cc-pace ranks no other account usable', needsFileBackend, () => {
+  threeSaved();
+  publishRanking([
+    { name: 'third', eligible: true, reason: null, room: 5, spare: 0 },
+    { name: 'work', eligible: false, reason: 'login', room: 90, spare: 30 },
+    { name: 'personal', eligible: false, reason: 'spent', room: 0, spare: 2 },
+  ]);
+
+  assert.throws(() => pickRotationTarget(paths), /ranks no other account as usable/);
 });
 
 test('rotate refuses with nothing saved, and with only the active account saved', needsFileBackend, () => {
@@ -202,12 +252,13 @@ test('switching to the account already active writes nothing', needsFileBackend,
   login(paths, 'work@example.com');
   saveAccount(paths, 'work');
   const before = readFile(paths.credentialsFile);
+  const published = readRotationState(paths);
 
   const result = useAccount(paths, 'work');
 
   assert.deepEqual(result, { alreadyActive: true, email: 'work@example.com' });
   assert.equal(readFile(paths.credentialsFile), before);
-  assert.deepEqual(readRotationState(paths), {});
+  assert.deepEqual(readRotationState(paths), published);
 });
 
 test('use swaps tokens and identity, and re-snapshots the outgoing account', needsFileBackend, () => {
@@ -385,6 +436,41 @@ test('expiry comes from each snapshot, and from the live login for the active ac
   assert.equal(byName.personal.expiresAt, renewed.claudeAiOauth.refreshTokenExpiresAt);
   assert.equal(byName.work.active, false);
   assert.ok(Math.abs(byName.work.expiresAt - (Date.now() + 10 * DAY_MS)) < 60_000);
+});
+
+test('a switch publishes every login expiry in unix seconds, unknown ones as null', needsFileBackend, () => {
+  login(paths, 'work@example.com', expiringIn(10 * DAY_MS));
+  saveAccount(paths, 'work');
+  login(paths, 'personal@example.com');
+  saveAccount(paths, 'personal');
+
+  useAccount(paths, 'work');
+
+  const { logins } = readRotationState(paths);
+  assert.equal(logins.personal, null);
+  assert.ok(Math.abs(logins.work - (Date.now() + 10 * DAY_MS) / 1000) < 60);
+});
+
+test('renewing an account that is not live republishes its expiry', needsRenew, () => {
+  login(paths, 'work@example.com', expiringIn(DAY_MS));
+  saveAccount(paths, 'work');
+  login(paths, 'personal@example.com');
+  saveAccount(paths, 'personal');
+
+  const result = renewAccount(paths, 'work');
+
+  assert.equal(readRotationState(paths).logins.work, Math.floor(result.expiresAt / 1000));
+});
+
+test('removing an account drops it from the published logins', needsFileBackend, () => {
+  login(paths, 'work@example.com');
+  saveAccount(paths, 'work');
+  login(paths, 'personal@example.com');
+  saveAccount(paths, 'personal');
+
+  removeAccount(paths, 'work');
+
+  assert.deepEqual(Object.keys(readRotationState(paths).logins), ['personal']);
 });
 
 test('only logins inside the warning window are expiring, expired ones included', needsFileBackend, () => {
@@ -620,7 +706,7 @@ const paceRule = { accounts: ['work'], buckets: { five_hour: 95 }, command: 'cc-
 
 test('a new account joins the cc-pace rotation, leaving the rest of its config alone', needsFileBackend, () => {
   writePace({ segments: ['five_hour'], rotation: paceRule });
-  process.env.FAKE_BROWSER_ACCOUNT = 'cinzia@example.com';
+  process.env.FAKE_BROWSER_ACCOUNT = 'side@example.com';
 
   const added = addAccount(paths);
   login(paths, 'personal@example.com');
@@ -630,7 +716,7 @@ test('a new account joins the cc-pace rotation, leaving the rest of its config a
   assert.equal(saved.rotation, 'joined');
   assert.deepEqual(readJson(paths.paceConfig), {
     segments: ['five_hour'],
-    rotation: { ...paceRule, accounts: ['work', 'cinzia', 'personal'] },
+    rotation: { ...paceRule, accounts: ['work', 'side', 'personal'] },
   });
 });
 

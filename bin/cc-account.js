@@ -2,7 +2,9 @@
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
+import { alerts } from '../src/alerts.js';
 import { resolvePaths } from '../src/paths.js';
+import { applySetting, describeSettings } from '../src/settings.js';
 import { usesKeychain } from '../src/credentials.js';
 import {
   accountsWithExpiry,
@@ -14,13 +16,13 @@ import {
   listAccounts,
   loggedInEmail,
   pickRotationTarget,
+  publishLogins,
   removeAccount,
   renewAccount,
   saveAccount,
   setBrowser,
   useAccount,
 } from '../src/accounts.js';
-import { writeRotationState } from '../src/rotationState.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -33,14 +35,20 @@ const HELP = `cc-account - switch the active Claude Code account.
   save [name]     Snapshot the logged-in account. Name defaults to the email local part.
   remove <name>   Delete a snapshot. The live account cannot be removed.
   use <name>      Switch to a snapshot. Re-snapshots the outgoing account first.
-  rotate          Switch to the account switched away from longest ago.
+  rotate          Switch to the account cc-pace ranks best, or without cc-pace,
+                  the one switched away from longest ago.
   list            Show snapshots and when each login expires; * marks the active one.
+                  With cc-pace, also each account's use and the forecast for all of them.
   current         Show who is logged in now.
   renew <name>    Sign an account in again through the browser, which resets its expiry.
   browser <name> [command...]
                   The browser renew opens for that account, such as a Chrome profile.
                   With no command, show it; --reset returns to a private window.
-  check           Warn about logins that expire within ${WARNING_DAYS} days. --hook prints SessionStart JSON.
+  check           Warn about logins that expire within ${WARNING_DAYS} days. --hook prints SessionStart JSON;
+                  --json prints every alert for the plugin, usage included with cc-pace.
+  config          Show the rotation and sign-in settings. --json for the menu.
+  config set <key> <value>
+                  Change one; the key is shown in brackets beside each setting.
 
 Options:
   --creds-only    Swap credentials only, leaving oauthAccount untouched.
@@ -88,6 +96,44 @@ function announceLogin(browser, email) {
       ? `Opening ${path.basename(browser[0])} to sign in as ${who}.`
       : `No browser found to open privately. Open the link below in a private window and sign in as ${who}.`,
   );
+}
+
+/** A moment in the local time zone, as a person plans around it: `Sun 8 Nov 07:00`. */
+const when = (secs) =>
+  new Date(secs * 1000).toLocaleString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).replace(',', '');
+
+const WINDOW_NAMES = { five_hour: '5-hour', seven_day: 'weekly' };
+
+/** One account's use of the forecast window, as cc-pace last saw it. */
+function usageLabel(forecast, accountName) {
+  const usage = forecast?.accounts?.find((entry) => entry.name === accountName);
+  if (!usage) return '';
+  const window = WINDOW_NAMES[forecast.window] ?? forecast.window;
+  if (typeof usage.used !== 'number') return `  ${window} use not seen yet`;
+  return `  ${window} ${Math.round(usage.used)}%${usage.resets ? `, resets ${when(usage.resets)}` : ''}`;
+}
+
+/** cc-pace's forecast for all accounts together, in one line. */
+function forecastLine(forecast) {
+  if (!forecast) return null;
+  const sustain = `${forecast.sustainable} accounts sustain ${forecast.sustainable.toFixed(1)}x`;
+  if (typeof forecast.burn !== 'number') return `${sustain}; the current burn is not measured yet.`;
+  const pace = `Burning ${forecast.burn.toFixed(2)}x; ${sustain}.`;
+  if (!forecast.runsOutAt) return `${pace} At this pace the quota lasts until the resets.`;
+  const back = forecast.resumesAt ? `, back ${when(forecast.resumesAt)}` : '';
+  return `${pace} At this pace every account runs out ${when(forecast.runsOutAt)}${back}.`;
+}
+
+function holdText(hold) {
+  const next = hold.next ? ` '${hold.next.name}' frees up ${when(hold.next.at)}.` : '';
+  const renew = hold.renew.length ? ` Renew to bring back: ${hold.renew.join(', ')}.` : '';
+  return `All accounts are out of quota: hold off on new work.${next}${renew}`;
 }
 
 const goodUntil = (expiresAt) =>
@@ -219,7 +265,13 @@ try {
   }
 
   case 'rotate': {
-    await switchTo(pickRotationTarget(paths));
+    const target = pickRotationTarget(paths);
+    console.log(
+      target.by === 'cc-pace'
+        ? `cc-pace ranks '${target.name}' best: most room, at the best pace, with a working login.`
+        : `'${target.name}' was switched away from longest ago.`,
+    );
+    await switchTo(target.name);
     break;
   }
 
@@ -230,13 +282,19 @@ try {
       console.log('No accounts saved. Run: cc-account save <name>');
       break;
     }
+    const { forecast, hold } = alerts(paths);
     const width = Math.max(...accounts.map((account) => account.name.length));
     for (const { name: accountName, meta, active, expiresAt } of accounts) {
       const marker = active ? '*' : ' ';
       const plan = meta.subscriptionType ?? meta.authMethod ?? '?';
       const expiry = expiresAt === null ? '' : `  ${expiryLabel(expiresAt)}`;
-      console.log(`${marker} ${accountName.padEnd(width)}  ${meta.email ?? '?'}  [${plan}]${expiry}`);
+      console.log(
+        `${marker} ${accountName.padEnd(width)}  ${meta.email ?? '?'}  [${plan}]${usageLabel(forecast, accountName)}${expiry}`,
+      );
     }
+    const outlook = forecastLine(forecast);
+    if (outlook) console.log(`\n${outlook}`);
+    if (hold) console.log(`! ${holdText(hold)}`);
     await offerRenewals(activeEmail);
     break;
   }
@@ -247,8 +305,31 @@ try {
     const known = findByEmail(paths, status.email);
     // Refresh the published identity while we have it: this is the one command that resolves
     // who is live, so it doubles as the way to re-sync after a manual `claude /login`.
-    if (known) writeRotationState(paths, { active: known, email: status.email });
+    if (known) publishLogins(paths, status.email, { active: known, email: status.email });
     console.log(`${describe(status)} via ${status.authMethod} ${known ? `'${known}'` : '(no snapshot)'}`);
+    break;
+  }
+
+  case 'config': {
+    // Taken verbatim after the key: a browser command carries flags of its own.
+    const [action, key, ...value] = rest;
+    if (action === 'set') {
+      if (!key || value.length === 0) die('Usage: cc-account config set <key> <value>');
+      applySetting(paths, key, value.join(' '));
+      console.log(`Set ${key}.`);
+      break;
+    }
+    const settings = describeSettings(paths);
+    if (flags.has('--json')) {
+      console.log(JSON.stringify(settings));
+      break;
+    }
+    const width = Math.max(...settings.map((setting) => setting.label.length));
+    for (const setting of settings) {
+      const picked = setting.options?.find((option) => option.value === setting.value);
+      const shown = picked?.label ?? (setting.value || setting.placeholder);
+      console.log(`${setting.label.padEnd(width)}  ${shown}   [${setting.key}]`);
+    }
     break;
   }
 
@@ -279,6 +360,19 @@ try {
   }
 
   case 'check': {
+    if (flags.has('--json')) {
+      // The plugin polls this every minute in every session, so it starts no `claude` process.
+      const state = alerts(paths);
+      console.log(
+        JSON.stringify({
+          ...state,
+          logins: state.logins.map(({ meta, ...account }) => ({ ...account, text: expiryWarning({ meta, ...account }) })),
+          hold: state.hold && { ...state.hold, text: holdText(state.hold) },
+          forecast: state.forecast && { ...state.forecast, text: forecastLine(state.forecast) },
+        }),
+      );
+      break;
+    }
     if (!flags.has('--hook')) {
       const due = expiringAccounts(paths, loggedInEmail(authStatus()));
       if (due.length === 0) console.log(`No login expires within ${WARNING_DAYS} days.`);
@@ -286,8 +380,11 @@ try {
       break;
     }
     // A session is starting: stay silent unless there is something to act on, and never fail it.
+    // It is also the re-sync point for a login renewed by hand with /login.
     try {
-      const due = expiringAccounts(paths, loggedInEmail(authStatus()));
+      const activeEmail = loggedInEmail(authStatus());
+      publishLogins(paths, activeEmail);
+      const due = expiringAccounts(paths, activeEmail);
       if (due.length > 0) console.log(JSON.stringify(hookOutput(due)));
     } catch {
       /* a missing warning costs less than a broken session start */

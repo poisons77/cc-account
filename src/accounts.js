@@ -10,9 +10,9 @@ import {
   writeCredentials,
 } from './credentials.js';
 import { readJsonIfPresent, readJsonOr, writeFileAtomic, writeJsonAtomic } from './jsonFile.js';
-import { joinRotation, leaveRotation } from './paceRotation.js';
+import { joinRotation, leaveRotation, paceRanking } from './paceRotation.js';
 import { confinedTo } from './paths.js';
-import { writeRotationState } from './rotationState.js';
+import { updateRotationState } from './rotationState.js';
 
 const CREDENTIALS_SNAPSHOT = '.credentials.json';
 const ACCOUNT_SNAPSHOT = 'oauthAccount.json';
@@ -23,10 +23,25 @@ const META = 'meta.json';
  * these would be reachable from the CLI but not from the slash command, so it is refused at save
  * time rather than left as a trap to discover later.
  */
-export const RESERVED_NAMES = ['rotate', 'current', 'renew', 'add', 'remove'];
+export const RESERVED_NAMES = ['rotate', 'current', 'renew', 'add', 'remove', 'config'];
 
 /** How far ahead of a login's expiry to start asking for a renewal. Claude Code warns at 3 days. */
 export const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Inside this, a login is about to stop: alerts turn red, and cc-pace's rotation skips the account
+ * with the same fixed hour, as a switch into it would log out mid-turn.
+ */
+export const EXPIRY_URGENT_MS = 60 * 60 * 1000;
+
+/** How loudly a login's expiry needs saying: 'expired', 'urgent', 'warn', or null for not yet. */
+export function expiryLevel(expiresAt, now = Date.now()) {
+  if (expiresAt === null) return null;
+  const left = expiresAt - now;
+  if (left <= 0) return 'expired';
+  if (left < EXPIRY_URGENT_MS) return 'urgent';
+  return left < EXPIRY_WARNING_MS ? 'warn' : null;
+}
 
 const SHELL_SAFE = /^[\w@+=:,./-]+$/;
 
@@ -122,15 +137,32 @@ export function accountsWithExpiry(paths, activeEmail) {
   });
 }
 
+/**
+ * Publish until when each saved login works, in unix seconds, so a rotation engine never picks a
+ * target whose login is dead. Called whenever a snapshot or the live login changes; `active` and
+ * `email`, when given, are published alongside.
+ */
+export function publishLogins(paths, activeEmail, identity = {}) {
+  // A session start runs this too: someone who never saved an account gets no store from it.
+  if (!fs.existsSync(paths.store)) return;
+  const logins = Object.fromEntries(
+    accountsWithExpiry(paths, activeEmail).map(({ name, expiresAt }) => [
+      name,
+      expiresAt === null ? null : Math.floor(expiresAt / 1000),
+    ]),
+  );
+  updateRotationState(paths, { ...identity, logins });
+}
+
 /** The accounts whose login expires within `EXPIRY_WARNING_MS`, or has already expired. */
 export const expiringAccounts = (paths, activeEmail, now = Date.now()) =>
-  accountsWithExpiry(paths, activeEmail).filter(
-    (account) => account.expiresAt !== null && account.expiresAt - now < EXPIRY_WARNING_MS,
-  );
+  accountsWithExpiry(paths, activeEmail).filter((account) => expiryLevel(account.expiresAt, now) !== null);
 
 /**
- * Which account to rotate to. `savedAt` is rewritten every time an account is switched away
- * from, so the oldest one has had the longest to recover its rate-limit window.
+ * Which account to rotate to, and what chose it. cc-pace's ranking wins when it is fresh: it has
+ * seen every account's usage and knows which logins still work. Without it, the oldest `savedAt`
+ * wins - it is rewritten every time an account is switched away from, so the oldest one has had
+ * the longest to recover its rate-limit window.
  */
 export function pickRotationTarget(paths) {
   const accounts = listAccounts(paths);
@@ -142,8 +174,19 @@ export function pickRotationTarget(paths) {
     throw new Error(`Only one account saved (${accounts[0].name}); nothing to rotate to.`);
   }
 
+  const ranked = paceRanking(paths);
+  if (ranked) {
+    const names = new Set(candidates.map((account) => account.name));
+    const best = ranked.find((name) => names.has(name));
+    if (best) return { name: best, by: 'cc-pace' };
+    throw new Error(
+      'cc-pace ranks no other account as usable now: each is over its limit or its login has ' +
+        'expired. Switch anyway with: cc-account use <name>',
+    );
+  }
+
   const stamp = (account) => Date.parse(account.meta.savedAt ?? '') || 0;
-  return candidates.sort((a, b) => stamp(a) - stamp(b))[0].name;
+  return { name: candidates.sort((a, b) => stamp(a) - stamp(b))[0].name, by: 'oldest' };
 }
 
 function refuseReserved(name) {
@@ -219,6 +262,7 @@ export function saveAccount(paths, name) {
     oauthAccount: readJsonOr(paths.configJson, {}).oauthAccount,
     status,
   });
+  publishLogins(paths, status.email);
 
   const rotation = isNew ? syncRotation(joinRotation, paths, resolved, 'joined') : null;
   return { name: resolved, status, rotation };
@@ -230,11 +274,13 @@ export function saveAccount(paths, name) {
  */
 export function removeAccount(paths, name) {
   const meta = requireSnapshot(paths, name);
-  if (meta.email && loggedInEmail(authStatus()) === meta.email) {
+  const liveEmail = loggedInEmail(authStatus());
+  if (meta.email && liveEmail === meta.email) {
     throw new Error(`'${name}' is the live account. Switch away from it first, then remove it.`);
   }
 
   fs.rmSync(accountDir(paths, name), { recursive: true, force: true });
+  publishLogins(paths, liveEmail);
   return { email: meta.email ?? null, rotation: syncRotation(leaveRotation, paths, name, 'left') };
 }
 
@@ -261,7 +307,7 @@ function installLogin(paths, name, { blob, oauthAccount }, { credsOnly = false }
 
   const status = authStatus();
   // Publish who is live now, so a renderer that cannot resolve identity still knows.
-  writeRotationState(paths, { active: name, email: status?.email });
+  publishLogins(paths, loggedInEmail(status), { active: name, email: status?.email });
   return status;
 }
 
@@ -366,9 +412,11 @@ function browserLogin(paths, { email, browser, label, onLogin }) {
 function keepLogin(paths, name, { status, login }, snapshotOptions) {
   // Live first, then the snapshot. If this dies in between, the next switch away re-snapshots
   // the new live login; the other order would have it re-snapshot the old one over the new.
-  const active = loggedInEmail(authStatus()) === status.email;
+  const liveEmail = loggedInEmail(authStatus());
+  const active = liveEmail === status.email;
   if (active) installLogin(paths, name, login);
   writeSnapshot(paths, name, { ...login, status }, snapshotOptions);
+  if (!active) publishLogins(paths, liveEmail);
   return { name, status, active, expiresAt: refreshTokenExpiry(login.blob) };
 }
 

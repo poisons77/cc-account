@@ -47,6 +47,14 @@ test('the cc-pace config is found where cc-pace looks for it', () => {
   assert.equal(resolvePaths({ CC_PACE_CONFIG: pinned, XDG_CONFIG_HOME: xdg }, home).paceConfig, pinned);
 });
 
+test('cc-pace rotation state sits beside its config, wherever that is', () => {
+  const pinned = path.join(path.sep, 'pace', 'config.json');
+  assert.equal(
+    resolvePaths({ CC_PACE_CONFIG: pinned }, home).paceState,
+    path.join(path.sep, 'pace', 'rotation-state.json'),
+  );
+});
+
 test('the auth caches live beside the config, and are the regenerable pair', () => {
   const paths = resolvePaths({}, home);
 
