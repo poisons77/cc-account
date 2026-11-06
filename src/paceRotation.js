@@ -22,6 +22,26 @@ export function paceOutlook(paths, now = Math.floor(Date.now() / 1000)) {
   return { accounts: ranking.accounts.filter(Boolean), forecast: fresh(forecast, now) ? forecast : null };
 }
 
+/**
+ * What cc-pace last saved of each account's windows, by name: `{ at, buckets: { [window]: { used,
+ * resets } } }`, with `at` the last render that account was live in. Empty without cc-pace.
+ */
+export function paceReadings(paths) {
+  const { seen } = readJsonOr(paths.paceState, {}) ?? {};
+  return seen && typeof seen === 'object' ? seen : {};
+}
+
+/**
+ * The question cc-pace's rotation stopped on, while the account it was asked on is still live:
+ * `{ reason: 'spent', name, used }` when it landed on an account already over its bar, or
+ * `{ reason: 'unread', name, readAt }` when the account it would move to was last read too long
+ * ago (`readAt` null for never). Null otherwise - leaving that account answers it.
+ */
+export function paceQuestion(paths, active) {
+  const { ask } = readJsonOr(paths.paceState, {}) ?? {};
+  return ask && typeof ask === 'object' && active && ask.on === active ? ask : null;
+}
+
 /** The accounts cc-pace ranks best first, eligible ones only, or null without a fresh ranking. */
 export function paceRanking(paths, now) {
   const outlook = paceOutlook(paths, now);

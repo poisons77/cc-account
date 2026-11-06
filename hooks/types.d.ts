@@ -16,6 +16,8 @@ export type SettingsMenu = { settings: Setting[]; error: string | null }
 export type Alerts = {
   logins: { name: string; level: 'expired' | 'urgent' | 'warn'; text: string }[]
   hold: { text: string } | null
+  /** What cc-pace's rotation stopped to ask; it waits for a person. */
+  question: { text: string; at: number } | null
   notices: boolean
 }
 

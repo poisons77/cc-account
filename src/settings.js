@@ -163,6 +163,12 @@ function rotationSettings(rotation, names) {
         },
       });
     }
+    settings.push({
+      key: 'askIfUnreadSecs',
+      label: '  Ask before switching into an account last read more than',
+      options: [OFF, ...spans([12 * HOUR, DAY, 2 * DAY, 3 * DAY])],
+      ...number('askIfUnreadSecs', 'off'),
+    });
   }
 
   if (mode === 'primary-fallback') {
@@ -212,7 +218,7 @@ function rotationSettings(rotation, names) {
       {
         key: 'seven_day.lateAt',
         label: '  Near the weekly reset, switch at',
-        options: [OFF, ...percents([96, 97, 98, 99, 100])],
+        options: [OFF, ...percents([95, 96, 97, 98, 99, 100])],
         ...lateKey('lateAt', 'off'),
       },
     );

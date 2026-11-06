@@ -23,7 +23,7 @@ const META = 'meta.json';
  * these would be reachable from the CLI but not from the slash command, so it is refused at save
  * time rather than left as a trap to discover later.
  */
-export const RESERVED_NAMES = ['rotate', 'current', 'renew', 'add', 'remove', 'config'];
+export const RESERVED_NAMES = ['rotate', 'current', 'status', 'renew', 'add', 'remove', 'config'];
 
 /** How far ahead of a login's expiry to start asking for a renewal. Claude Code warns at 3 days. */
 export const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000;

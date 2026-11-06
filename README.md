@@ -67,7 +67,7 @@ Save this as `~/.claude/commands/cc-account.md`:
 ````markdown
 ---
 description: Switch the active Claude Code account, rotate to the next one, add or renew a login, or show which is in use
-argument-hint: "[rotate | current | add [account-name] | renew account-name | account-name]"
+argument-hint: "[rotate | current | status | add [account-name] | renew account-name | account-name]"
 allowed-tools: Bash(cc-account:*)
 ---
 
@@ -78,6 +78,7 @@ Run exactly one command, matching the first case that applies, then report its o
 - `$1` is empty: `cc-account list`
 - `$1` is `rotate`: `cc-account rotate`
 - `$1` is `current`: `cc-account current`
+- `$1` is `status`: `cc-account status`
 - `$1` is `renew`: `cc-account renew $2`, with a 10-minute timeout. It opens a browser and waits for
   the sign-in, so say a browser window is opening first.
 - `$1` is `add`: `cc-account add $2`, with a 10-minute timeout. It opens a private browser window and
@@ -178,13 +179,14 @@ warning comes from a hook in `~/.claude/settings.json`:
 | `rotate` | Switch to the account cc-pace ranks best; without cc-pace, to the one switched away from longest ago. |
 | `list` | Show snapshots and when each login expires; `*` marks the active one. With cc-pace, also each account's use and the forecast for all of them. |
 | `current` | Show who is logged in now, and re-publish it after a manual `/login`. |
+| `status` | With cc-pace, each account's last saved use, when each window resets, how long ago it was read, and whether rotation would switch into it; `*` marks the active one. |
 | `renew <name>` | Sign that account in again through the browser, resetting its expiry. |
 | `browser <name> [command]` | Set the browser `renew` opens for that account; no command shows it, `--reset` returns to a private window. |
 | `check` | Name the logins that expire within three days. `--hook` prints it as SessionStart hook output; `--json` prints every alert the plugin draws. |
 | `config` | Show the rotation, notice and sign-in settings. `config set <key> <value>` changes one; the plugin's `/cc-account config` is the same list as a menu. |
 | `--creds-only` | Swap tokens only, leaving `oauthAccount` untouched. |
 
-`rotate`, `current`, `renew`, `add`, `remove` and `config` cannot be used as account names. `save` refuses them, so the
+`rotate`, `current`, `status`, `renew`, `add`, `remove` and `config` cannot be used as account names. `save` refuses them, so the
 `/cc-account` slash command can treat them as subcommands without ever hiding an account.
 
 `save` also refuses a name whose snapshot already holds a different email, so one account's token
@@ -199,7 +201,7 @@ to go; cc-account switches and keeps logins alive.**
 
 | | Alone | Together |
 |---|---|---|
-| cc-account | Saves, switches, renews and adds accounts; warns before a login ends; `rotate` picks the account switched away from longest ago. | `rotate` follows cc-pace's ranking; `list` adds each account's use and the forecast for all of them; every session hears when all accounts run out and when work can resume. |
+| cc-account | Saves, switches, renews and adds accounts; warns before a login ends; `rotate` picks the account switched away from longest ago. | `rotate` follows cc-pace's ranking; `list` adds each account's use and the forecast for all of them; `status` shows each account's last reading; every session hears when all accounts run out, when work can resume, and when rotation stops to ask. |
 | cc-pace | Shows usage, pace and burn in the status line. | Switches accounts by itself before one runs dry, skips any login in its last hour, and forecasts whether the quota of all accounts lasts until the resets. |
 
 Each holds what the other cannot see. cc-account never sees usage: it reads local files and asks
@@ -218,6 +220,11 @@ With the plugin, when no account has quota left, every open session shows it in 
 prompt, with the account that frees up first, and says so again the moment one has quota. Each
 session tells itself, so no model is woken to spend the quota that is gone. Turn it off with
 `cc-account config set sessionNotices off`, or from `/cc-account config`.
+
+When rotation lands on an account already over its limit, it stops instead of moving on, and every
+session shows the question in red until you pick an account with `/cc-account <name>`. `/cc-account
+config` can also make it ask before switching into an account whose last reading is too old to
+trust.
 
 Install cc-pace, then connect them at one of two depths.
 

@@ -3,7 +3,9 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 
 import { alerts } from '../src/alerts.js';
+import { paceOutlook, paceQuestion, paceReadings } from '../src/paceRotation.js';
 import { resolvePaths } from '../src/paths.js';
+import { readRotationState } from '../src/rotationState.js';
 import { applySetting, describeSettings } from '../src/settings.js';
 import { usesKeychain } from '../src/credentials.js';
 import {
@@ -40,6 +42,8 @@ const HELP = `cc-account - switch the active Claude Code account.
   list            Show snapshots and when each login expires; * marks the active one.
                   With cc-pace, also each account's use and the forecast for all of them.
   current         Show who is logged in now.
+  status          With cc-pace, each account's last saved use, when it resets, when it was
+                  read, and whether rotation would switch into it; * marks the active one.
   renew <name>    Sign an account in again through the browser, which resets its expiry.
   browser <name> [command...]
                   The browser renew opens for that account, such as a Chrome profile.
@@ -119,6 +123,33 @@ function usageLabel(forecast, accountName) {
   return `  ${window} ${Math.round(usage.used)}%${usage.resets ? `, resets ${when(usage.resets)}` : ''}`;
 }
 
+/** How long ago, coarsely: `just now`, `25m ago`, `3h ago`, `2d ago`. */
+function ago(secs) {
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
+/** Every window cc-pace saved of one account, and when it read them. */
+function readingLabel(seen, now) {
+  const windows = Object.entries(seen?.buckets ?? {});
+  if (windows.length === 0) return 'no reading yet';
+  const parts = windows.map(([key, { used, resets }]) => {
+    const reset = resets > now ? `resets ${when(resets)}` : `reset ${when(resets)}, full again`;
+    return `${WINDOW_NAMES[key] ?? key} ${Math.round(used)}%, ${reset}`;
+  });
+  return `${parts.join('; ')}  (read ${ago(now - seen.at)})`;
+}
+
+const VERDICTS = { spent: 'spent', login: 'login ending' };
+
+/** Whether cc-pace's ranking would switch into the account, or '' when it does not rank it. */
+function verdictLabel(ranked) {
+  if (!ranked) return '';
+  return `  ${ranked.eligible ? 'usable' : (VERDICTS[ranked.reason] ?? ranked.reason)}`;
+}
+
 /** cc-pace's forecast for all accounts together, in one line. */
 function forecastLine(forecast) {
   if (!forecast) return null;
@@ -128,6 +159,18 @@ function forecastLine(forecast) {
   if (!forecast.runsOutAt) return `${pace} At this pace the quota lasts until the resets.`;
   const back = forecast.resumesAt ? `, back ${when(forecast.resumesAt)}` : '';
   return `${pace} At this pace every account runs out ${when(forecast.runsOutAt)}${back}.`;
+}
+
+/** What cc-pace's rotation stopped to ask, and how to answer it. */
+function questionText(question, now = Math.floor(Date.now() / 1000)) {
+  const { reason, name: target, used, readAt } = question;
+  if (reason === 'spent') {
+    return `Rotation stopped: '${target}' was already at ${used}% when it switched there. ` +
+      'Pick an account with /cc-account <name>; /cc-account status compares them.';
+  }
+  const age = typeof readAt === 'number' ? `was last read ${ago(now - readAt)}` : 'has never been read';
+  return `Rotation stopped: '${target}' ${age}, so its use is unknown. ` +
+    `Switch anyway with /cc-account ${target}, or pick another; /cc-account status compares them.`;
 }
 
 function holdText(hold) {
@@ -299,6 +342,29 @@ try {
     break;
   }
 
+  case 'status': {
+    // Read from the files cc-pace and cc-account publish, so no `claude` process is started.
+    const accounts = listAccounts(paths);
+    if (accounts.length === 0) {
+      console.log('No accounts saved. Run: cc-account save <name>');
+      break;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const readings = paceReadings(paths);
+    const ranking = new Map((paceOutlook(paths, now)?.accounts ?? []).map((ranked) => [ranked.name, ranked]));
+    const { active } = readRotationState(paths);
+    const width = Math.max(...accounts.map((account) => account.name.length));
+    for (const { name: accountName } of accounts) {
+      const marker = accountName === active ? '*' : ' ';
+      console.log(
+        `${marker} ${accountName.padEnd(width)}  ${readingLabel(readings[accountName], now)}${verdictLabel(ranking.get(accountName))}`,
+      );
+    }
+    const question = paceQuestion(paths, active);
+    if (question) console.log(`\n! ${questionText(question, now)}`);
+    break;
+  }
+
   case 'current': {
     const status = authStatus();
     if (!status?.loggedIn) die('Logged out.');
@@ -369,6 +435,7 @@ try {
           logins: state.logins.map(({ meta, ...account }) => ({ ...account, text: expiryWarning({ meta, ...account }) })),
           hold: state.hold && { ...state.hold, text: holdText(state.hold) },
           forecast: state.forecast && { ...state.forecast, text: forecastLine(state.forecast) },
+          question: state.question && { ...state.question, text: questionText(state.question) },
         }),
       );
       break;

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import { EXPIRY_URGENT_MS, EXPIRY_WARNING_MS, expiryLevel } from '../src/accounts.js';
 import { alerts } from '../src/alerts.js';
 import { holdOf, RANKING_MAX_AGE_SECS } from '../src/paceRotation.js';
+import { updateRotationState } from '../src/rotationState.js';
 import { applySetting } from '../src/settings.js';
 import { sandbox } from './helpers.js';
 
@@ -68,7 +69,18 @@ test('alerts pass on cc-pace\'s hold and forecast while they are fresh, and drop
 });
 
 test('without cc-pace there is no hold and no forecast, only logins', () => {
-  assert.deepEqual(alerts(paths), { logins: [], hold: null, forecast: null, notices: true });
+  assert.deepEqual(alerts(paths), { logins: [], hold: null, forecast: null, question: null, notices: true });
+});
+
+test('a question cc-pace stopped on is passed on only while the account it was asked on is live', () => {
+  const ask = { reason: 'spent', on: 'work', name: 'work', used: 99, at: NOW };
+  publishPace({ ask });
+  updateRotationState(paths, { active: 'work' });
+  assert.deepEqual(alerts(paths, NOW * 1000).question, ask);
+
+  // Switched by hand: that is the answer, and the question is gone even before cc-pace renders again.
+  updateRotationState(paths, { active: 'personal' });
+  assert.equal(alerts(paths, NOW * 1000).question, null);
 });
 
 test('turning session notices off is reported with the alerts', () => {

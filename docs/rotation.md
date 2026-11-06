@@ -112,9 +112,22 @@ only reads it, for six hours after cc-pace last wrote it:
 
 - `ranking`: every account, best first. `rotate` takes the first eligible one that is not live.
 - `forecast`: when the quota of all accounts together runs out at the current burn, shown by `list`.
+- `seen`: the last reading of every account and when it was taken, shown by `status`.
+- `ask`: the question rotation stopped on - an account already spent when it landed there, or, with
+  "Ask before switching into an account last read more than" set, a target read too long ago.
 
 When no ranked account is eligible, every session with the plugin is told so in red, with the
 account that frees up first, and told again when one has quota.
+
+When rotation stops to ask, every session with the plugin shows the question in red above the
+prompt until an account is picked:
+
+```
+! Rotation stopped: 'work' was already at 99% when it switched there. Pick an account with /cc-account <name>; /cc-account status compares them.
+```
+
+`/cc-account <name>` switches and answers it; `/cc-account rotate` takes cc-pace's best-ranked
+account.
 
 Point cc-pace elsewhere with its `store` field if `CC_ACCOUNT_HOME` moves the snapshots.
 

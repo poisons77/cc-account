@@ -16,7 +16,7 @@ const CLI_MS = 2 * 60 * 1000
 
 // The first word picks the subcommand; anything else is an account name to switch to. These words
 // are RESERVED_NAMES in src/accounts.js, so no account can carry one.
-const SUBCOMMANDS = new Set(['rotate', 'current', 'renew', 'add', 'remove', 'config'])
+const SUBCOMMANDS = new Set(['rotate', 'current', 'status', 'renew', 'add', 'remove', 'config'])
 const BROWSER_SUBCOMMANDS = new Set(['renew', 'add'])
 
 // How often each session asks whether a login is ending or every account is out of quota.
@@ -28,9 +28,11 @@ const RESUMED = 'An account has quota again: work can resume.'
 const menu = atom({ plugin: 'cc-account', key: 'menu' } as const, { settings: [], error: null } as SettingsMenu, {
   shape: 'menu-1',
 })
-const alerts = atom({ plugin: 'cc-account', key: 'alerts' } as const, { logins: [], hold: null, notices: true } as Alerts, {
-  shape: 'alerts-1',
-})
+const alerts = atom(
+  { plugin: 'cc-account', key: 'alerts' } as const,
+  { logins: [], hold: null, question: null, notices: true } as Alerts,
+  { shape: 'alerts-2' },
+)
 
 function cli($: EngineInterface, argv: string[], timeoutMs = CLI_MS) {
   return $.process.run(['node', `${$.plugin.root}/bin/cc-account.js`, ...argv], { timeoutMs })
@@ -73,6 +75,9 @@ async function refresh($: EngineInterface) {
     return next
   })
   if (!next.notices) return
+  if (next.question && next.question.at !== previous?.question?.at) {
+    $.ui.toast(next.question.text, { timeoutMs: NOTICE_MS })
+  }
   if (next.hold && !previous?.hold) $.ui.toast(next.hold.text, { timeoutMs: NOTICE_MS })
   if (!next.hold && previous?.hold) $.ui.toast(RESUMED, { timeoutMs: NOTICE_MS })
 }
@@ -85,8 +90,8 @@ export const register: Register = on => {
     await $.command.register({
       name: COMMAND,
       description:
-        'Switch the active Claude Code account, rotate to the next one, add, renew or remove a login, change the rotation settings, or show which is in use',
-      argumentHint: '[rotate | current | config | add [account-name] | renew account-name | remove account-name | account-name]',
+        'Switch the active Claude Code account, rotate to the next one, add, renew or remove a login, change the rotation settings, or show which is in use and what each account has left',
+      argumentHint: '[rotate | current | status | config | add [account-name] | renew account-name | remove account-name | account-name]',
     })
     return started
   })
@@ -108,10 +113,12 @@ export const register: Register = on => {
     return { text: text || `cc-account ${argv[0]} exited with code ${result.exitCode}.` }
   }).catch(() => ({ text: 'cc-account did not finish. Run it in a terminal to see why.' }))
 
-  // Red above the prompt for as long as it holds: a login in its last hour, or no account with quota.
+  // Red above the prompt for as long as it holds: a login in its last hour, no account with quota,
+  // or a rotation stopped until someone picks an account.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const { logins, hold, notices } = await read($, alerts)
+    const { logins, hold, question, notices } = await read($, alerts)
     const lines = [
+      ...(question ? [question.text] : []),
       ...(notices && hold ? [hold.text] : []),
       ...logins.filter(login => login.level !== 'warn').map(login => login.text),
     ]
