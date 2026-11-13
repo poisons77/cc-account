@@ -3,14 +3,19 @@ export type Setting = {
   key: string
   label: string
   value: string
+  /** A limit row: `all` for every account, or the one account whose own limit it is. */
+  scope?: string
   /** Present for a pick; absent for free text. */
   options?: { value: string; label: string }[]
   /** What an empty free-text value means. */
   placeholder?: string
 }
 
-/** What the settings pane draws: the rows, and the refusal of the last change when there was one. */
-export type SettingsMenu = { settings: Setting[]; error: string | null }
+/**
+ * What the settings pane draws: the rows, the refusal of the last change when there was one, and
+ * whose limits are shown.
+ */
+export type SettingsMenu = { settings: Setting[]; error: string | null; scope: string }
 
 /** What every session is told, as `cc-account check --json` reports it; only the fields drawn are typed. */
 export type Alerts = {

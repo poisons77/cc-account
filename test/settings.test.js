@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 
-import { saveAccount } from '../src/accounts.js';
+import { removeAccount, saveAccount } from '../src/accounts.js';
 import { applySetting, describeSettings, splitCommand } from '../src/settings.js';
 import { login, readFile, readJson, sandbox } from './helpers.js';
 
@@ -138,6 +138,66 @@ test('the later weekly bar is set and cleared together with its window', needsFi
 
   applySetting(paths, 'seven_day.lateAt', 'off');
   assert.equal(rotation().buckets.seven_day, 95);
+});
+
+test('each account in the rotation gets its own limit rows, following every account until set', needsFileBackend, () => {
+  saveAll('work', 'personal', 'spare');
+  writePace({
+    rotation: {
+      accounts: ['work', 'personal'],
+      buckets: { five_hour: 95, seven_day: { at: 90, lateAt: 95, lateWithinSecs: 172800 } },
+    },
+  });
+
+  const rows = describeSettings(paths).filter((setting) => setting.scope === 'work');
+  assert.deepEqual(
+    rows.map((setting) => setting.key),
+    ['limits.work.five_hour', 'limits.work.seven_day', 'limits.work.seven_day.lateAt', 'limits.work.seven_day.lateWithinSecs'],
+  );
+  assert.ok(rows.every((setting) => setting.value === 'same'));
+  assert.equal(rows[1].options[0].label, 'as all accounts (90%)');
+  assert.equal(describeSettings(paths).find((setting) => setting.key === 'seven_day').scope, 'all');
+  assert.ok(!keys().some((key) => key.startsWith('limits.spare.')), 'an account outside the rotation has no limits');
+
+  applySetting(paths, 'limits.work.seven_day', '80');
+  applySetting(paths, 'limits.work.seven_day.lateWithinSecs', '259200');
+  assert.deepEqual(rotation().perAccount, { work: { seven_day: { at: 80, lateWithinSecs: 259200 } } });
+  assert.equal(value('limits.work.seven_day'), '80');
+  assert.equal(value('seven_day'), '90', 'every other account keeps the shared bar');
+
+  applySetting(paths, 'limits.work.seven_day.lateWithinSecs', 'same');
+  assert.deepEqual(rotation().perAccount, { work: { seven_day: 80 } });
+  applySetting(paths, 'limits.work.seven_day', 'same');
+  assert.equal('perAccount' in rotation(), false, 'nothing of its own left, so nothing written');
+});
+
+test('an account drops the late bar alone, or keeps its own when the shared one goes', needsFileBackend, () => {
+  saveAll('work', 'personal');
+  writePace({ rotation: { accounts: ['work', 'personal'], buckets: { seven_day: { at: 90, lateAt: 95, lateWithinSecs: 172800 } } } });
+
+  applySetting(paths, 'limits.work.seven_day.lateAt', 'off');
+  assert.deepEqual(rotation().perAccount, { work: { seven_day: { lateAt: false } } });
+  assert.ok(!keys().includes('limits.work.seven_day.lateWithinSecs'), 'no late bar, so no window to set');
+
+  applySetting(paths, 'limits.personal.seven_day.lateAt', '99');
+  applySetting(paths, 'seven_day.lateAt', 'off');
+  assert.deepEqual(rotation().perAccount.personal, { seven_day: { lateAt: 99, lateWithinSecs: 172800 } });
+  assert.equal(rotation().buckets.seven_day, 90);
+});
+
+test('a window no longer watched, or an account removed, takes its own limits with it', needsFileBackend, () => {
+  // Saved last, `personal` is the live account, which cannot be removed.
+  saveAll('work', 'spare', 'personal');
+  writePace({ rotation: { accounts: ['work', 'personal', 'spare'], buckets: { five_hour: 95, seven_day: 90 } } });
+  applySetting(paths, 'limits.work.five_hour', '85');
+  applySetting(paths, 'limits.work.seven_day', '80');
+  applySetting(paths, 'limits.spare.seven_day', '98');
+
+  applySetting(paths, 'five_hour', 'off');
+  assert.deepEqual(rotation().perAccount, { work: { seven_day: 80 }, spare: { seven_day: 98 } });
+
+  removeAccount(paths, 'spare');
+  assert.deepEqual(rotation().perAccount, { work: { seven_day: 80 } });
 });
 
 test('the last watched window cannot be switched off', needsFileBackend, () => {

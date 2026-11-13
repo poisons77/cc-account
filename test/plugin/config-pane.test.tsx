@@ -18,9 +18,20 @@ const SETTINGS = [
     key: 'five_hour',
     label: 'Switch at 5-hour use',
     value: '95',
+    scope: 'all',
     options: [
       { value: '90', label: '90%' },
       { value: '95', label: '95%' },
+    ],
+  },
+  {
+    key: 'limits.work.five_hour',
+    label: "'work' switches at 5-hour use",
+    value: 'same',
+    scope: 'work',
+    options: [
+      { value: 'same', label: 'as all accounts (95%)' },
+      { value: '80', label: '80%' },
     ],
   },
   { key: 'browser.work', label: "Browser that signs in 'work'", value: '', placeholder: 'a private window' },
@@ -76,6 +87,27 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     await $.ui.select({ plugin: 'cc-account', key: 'five_hour', value: '90' })
     expect(runs.some(argv => argv.slice(-4).join(' ') === 'config set five_hour 90')).toBe(true)
+    await ui.unmount()
+  })
+
+  test(`limits show for every account until one account is picked (${surface})`, async ($, on) => {
+    const runs = engine(on)
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ command: 'cc-account', args: 'config' })
+
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ type: 'Select', key: 'scope' })).toBeTruthy()
+    expect(await ui.find({ type: 'Select', key: 'five_hour' })).toBeTruthy()
+    expect(await ui.find({ type: 'Select', key: 'limits.work.five_hour' })).toBeFalsy()
+
+    await $.ui.select({ plugin: 'cc-account', key: 'scope', value: 'work' })
+    expect(await ui.find({ type: 'Select', key: 'five_hour' })).toBeFalsy()
+    expect(await ui.find({ type: 'Select', key: 'limits.work.five_hour' })).toBeTruthy()
+    // Rows outside the limits stay whatever the scope.
+    expect(await ui.find({ type: 'Select', key: 'mode' })).toBeTruthy()
+
+    await $.ui.select({ plugin: 'cc-account', key: 'limits.work.five_hour', value: '80' })
+    expect(runs.some(argv => argv.slice(-4).join(' ') === 'config set limits.work.five_hour 80')).toBe(true)
     await ui.unmount()
   })
 

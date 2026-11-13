@@ -2,7 +2,7 @@ import fs from 'node:fs';
 
 import { listAccounts, setBrowser } from './accounts.js';
 import { readJsonOr, writeJsonAtomic } from './jsonFile.js';
-import { editRotation, readPaceConfig } from './paceRotation.js';
+import { editRotation, readPaceConfig, withoutLimits } from './paceRotation.js';
 
 /**
  * Every setting `/cc-account config` shows, described once so the menu pane, `cc-account config`
@@ -56,13 +56,52 @@ function windowsOf(rotation) {
   return { [rotation?.bucket ?? 'five_hour']: { at } };
 }
 
+/** A window's bars in cc-pace's shape: a plain number when `at` is all there is. */
+const compact = (spec) => (Object.keys(spec).length === 1 && 'at' in spec ? spec.at : spec);
+
 /** Write windows back in cc-pace's object shape, a plain number wherever nothing else is set. */
 function withWindows(rotation, windows) {
   const { bucket, at, ...rest } = rotation;
-  const buckets = Object.fromEntries(
-    Object.entries(windows).map(([key, spec]) => [key, Object.keys(spec).length === 1 ? spec.at : spec]),
-  );
+  const buckets = Object.fromEntries(Object.entries(windows).map(([key, spec]) => [key, compact(spec)]));
   return { ...rest, buckets };
+}
+
+/** One account's own bars from cc-pace's `perAccount`, as `{ key: { at?, lateAt?, lateWithinSecs? } }`. */
+function overridesOf(rotation, name) {
+  const own = rotation?.perAccount?.[name];
+  if (!own || typeof own !== 'object') return {};
+  return Object.fromEntries(
+    Object.entries(own).map(([key, spec]) => [
+      key,
+      spec && typeof spec === 'object' ? { ...spec } : typeof spec === 'number' ? { at: spec } : {},
+    ]),
+  );
+}
+
+/** Write one account's own bars back, dropping every window, account and block left empty. */
+function withOverrides(rotation, name, windows) {
+  const own = Object.fromEntries(
+    Object.entries(windows)
+      .filter(([, spec]) => Object.keys(spec).length > 0)
+      .map(([key, spec]) => [key, compact(spec)]),
+  );
+  const rest = withoutLimits(rotation, name);
+  return Object.keys(own).length > 0 ? { ...rest, perAccount: { ...rest.perAccount, [name]: own } } : rest;
+}
+
+/** Change one window of one account's own bars. */
+function editOverride(block, name, key, change) {
+  const own = overridesOf(block, name);
+  own[key] = { ...(own[key] ?? {}) };
+  change(own[key]);
+  return withOverrides(block, name, own);
+}
+
+/** The accounts the rotation draws on, in the order the config names them. */
+function membersOf(rotation, mode) {
+  if (mode === 'peers') return rotation.accounts;
+  if (mode === 'primary-fallback') return [rotation.primary, rotation.fallback];
+  return [];
 }
 
 export function modeOf(rotation) {
@@ -87,6 +126,86 @@ function withMode(rotation, mode, names) {
   return { ...pair, primary: pair.primary ?? names[0], fallback: pair.fallback ?? names[1] };
 }
 
+// The bars the menu offers, for every account and for one alike.
+const FIVE_HOUR_BARS = [80, 85, 90, 95, 98];
+const WEEKLY_BARS = [80, 85, 90, 95, 98, 99];
+const LATE_BARS = [95, 96, 97, 98, 99, 100];
+const NEAR_SPANS = [12 * HOUR, DAY, 36 * HOUR, 2 * DAY, 3 * DAY];
+
+// Limit rows carry the scope they belong to, so the menu can show one scope at a time: every
+// account, or a single one whose own bars win over the shared ones.
+const ALL = 'all';
+const SAME = 'same';
+const same = (shared) => ({ value: SAME, label: `as all accounts (${shared})` });
+
+/**
+ * One account's own limits. Each row reads `same` until the account sets that field itself, and
+ * picking `same` again drops the field, so the account follows the shared value once more.
+ */
+function accountLimits(rotation, windows, name) {
+  const own = overridesOf(rotation, name);
+  const sharedWeekly = windows.seven_day;
+  const ownWeekly = own.seven_day ?? {};
+  const field = (key, at) => ({
+    get: () => (own[key]?.[at] === undefined ? SAME : String(own[key][at])),
+    set: (block, value) =>
+      editOverride(block, name, key, (spec) => {
+        if (value === SAME) delete spec[at];
+        else spec[at] = Number(value);
+      }),
+  });
+
+  const rows = [];
+  for (const [key, label, bars] of [
+    ['five_hour', '5-hour', FIVE_HOUR_BARS],
+    ['seven_day', 'weekly', WEEKLY_BARS],
+  ]) {
+    if (!windows[key]) continue;
+    rows.push({
+      key: `limits.${name}.${key}`,
+      label: `'${name}' switches at ${label} use`,
+      scope: name,
+      options: [same(`${windows[key].at}%`), ...percents(bars)],
+      ...field(key, 'at'),
+    });
+  }
+  if (!sharedWeekly) return rows;
+
+  const sharedLate = sharedWeekly.lateAt;
+  rows.push({
+    key: `limits.${name}.seven_day.lateAt`,
+    label: `  Near the weekly reset, '${name}' switches at`,
+    scope: name,
+    options: [same(sharedLate === undefined ? 'off' : `${sharedLate}%`), OFF, ...percents(LATE_BARS)],
+    get: () => (ownWeekly.lateAt === undefined ? SAME : ownWeekly.lateAt === false ? 'off' : String(ownWeekly.lateAt)),
+    set: (block, value) =>
+      editOverride(block, name, 'seven_day', (spec) => {
+        delete spec.lateAt;
+        if (value === 'off') {
+          spec.lateAt = false;
+          delete spec.lateWithinSecs;
+        } else if (value !== SAME) {
+          spec.lateAt = Number(value);
+          // cc-pace needs both halves; with no shared window to take, the account gets its own.
+          if (sharedWeekly.lateWithinSecs === undefined) spec.lateWithinSecs ??= DEFAULT_LATE_WITHIN;
+        }
+      }),
+  });
+
+  const lateAt = ownWeekly.lateAt === undefined ? sharedLate : ownWeekly.lateAt;
+  if (typeof lateAt !== 'number') return rows;
+  const sharedWithin = sharedWeekly.lateWithinSecs;
+  rows.push({
+    key: `limits.${name}.seven_day.lateWithinSecs`,
+    label: `  "Near" means within`,
+    scope: name,
+    // Without a shared window there is nothing to follow: the account's own is the only one.
+    options: [...(sharedWithin === undefined ? [] : [same(spanLabel(sharedWithin))]), ...spans(NEAR_SPANS)],
+    ...field('seven_day', 'lateWithinSecs'),
+  });
+  return rows;
+}
+
 /** One rotation setting: how it reads from the block, and the block a picked value makes. */
 function rotationSettings(rotation, names) {
   const mode = modeOf(rotation);
@@ -102,7 +221,16 @@ function rotationSettings(rotation, names) {
       if (value === 'off') delete next[key];
       else next[key] = { ...(next[key] ?? {}), at: Number(value) };
       if (Object.keys(next).length === 0) throw new Error('At least one window must stay watched.');
-      return withWindows(block, next);
+      // A window nobody watches has no bars to override: its per-account entries go with it.
+      let result = withWindows(block, next);
+      if (value === 'off') {
+        for (const name of Object.keys(block.perAccount ?? {})) {
+          const own = overridesOf(result, name);
+          delete own[key];
+          result = withOverrides(result, name, own);
+        }
+      }
+      return result;
     },
   });
 
@@ -112,7 +240,15 @@ function rotationSettings(rotation, names) {
       const next = { ...windowsOf(block) };
       if (!next.seven_day) throw new Error('Watch the weekly window first.');
       const spec = { ...next.seven_day };
+      let result = block;
       if (field === 'lateAt' && value === 'off') {
+        // An account with a late bar of its own took its window from these shared halves: it keeps it.
+        for (const name of Object.keys(block.perAccount ?? {})) {
+          if (typeof overridesOf(block, name).seven_day?.lateAt !== 'number' || spec.lateWithinSecs === undefined) continue;
+          result = editOverride(result, name, 'seven_day', (own) => {
+            own.lateWithinSecs ??= spec.lateWithinSecs;
+          });
+        }
         delete spec.lateAt;
         delete spec.lateWithinSecs;
       } else {
@@ -122,7 +258,7 @@ function rotationSettings(rotation, names) {
         spec.lateAt ??= 99;
       }
       next.seven_day = spec;
-      return withWindows(block, next);
+      return withWindows(result, next);
     },
   });
 
@@ -202,13 +338,15 @@ function rotationSettings(rotation, names) {
     {
       key: 'five_hour',
       label: 'Switch at 5-hour use',
-      options: [OFF, ...percents([80, 85, 90, 95, 98])],
+      scope: ALL,
+      options: [OFF, ...percents(FIVE_HOUR_BARS)],
       ...window('five_hour'),
     },
     {
       key: 'seven_day',
       label: 'Switch at weekly use',
-      options: [OFF, ...percents([80, 85, 90, 95, 98, 99])],
+      scope: ALL,
+      options: [OFF, ...percents(WEEKLY_BARS)],
       ...window('seven_day'),
     },
   );
@@ -218,7 +356,8 @@ function rotationSettings(rotation, names) {
       {
         key: 'seven_day.lateAt',
         label: '  Near the weekly reset, switch at',
-        options: [OFF, ...percents([95, 96, 97, 98, 99, 100])],
+        scope: ALL,
+        options: [OFF, ...percents(LATE_BARS)],
         ...lateKey('lateAt', 'off'),
       },
     );
@@ -226,11 +365,14 @@ function rotationSettings(rotation, names) {
       settings.push({
         key: 'seven_day.lateWithinSecs',
         label: '  "Near" means within',
-        options: spans([12 * HOUR, DAY, 36 * HOUR, 2 * DAY]),
+        scope: ALL,
+        options: spans(NEAR_SPANS),
         ...lateKey('lateWithinSecs', String(DEFAULT_LATE_WITHIN)),
       });
     }
   }
+
+  for (const name of membersOf(rotation, mode)) settings.push(...accountLimits(rotation, windows, name));
 
   settings.push(
     {
@@ -322,10 +464,11 @@ function allSettings(paths) {
  * text what an empty value means.
  */
 export function describeSettings(paths) {
-  return allSettings(paths).map(({ key, label, options, placeholder, get }) => ({
+  return allSettings(paths).map(({ key, label, scope, options, placeholder, get }) => ({
     key,
     label,
     value: get() ?? '',
+    ...(scope && { scope }),
     ...(options && { options }),
     ...(placeholder && { placeholder }),
   }));

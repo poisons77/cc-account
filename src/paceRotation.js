@@ -85,17 +85,28 @@ export function editRotation(paths, change) {
  * the rotation and a removed one leaves it. With no cc-pace config, or one with no `accounts`
  * list - a primary-and-fallback rule names its accounts on purpose - nothing is written.
  */
-function updateList(paths, change) {
+function updateList(paths, change, tidy = (rotation) => rotation) {
   return editRotation(paths, (rotation) => {
     const accounts = rotation?.accounts;
     if (!Array.isArray(accounts)) return null;
     const next = change(accounts);
-    return next.length === accounts.length ? null : { ...rotation, accounts: next };
+    return next.length === accounts.length ? null : tidy({ ...rotation, accounts: next });
   });
+}
+
+/** The block without `name`'s own limits, and without `perAccount` once nobody has any. */
+export function withoutLimits(rotation, name) {
+  const { perAccount, ...rest } = rotation;
+  const { [name]: dropped, ...others } = perAccount ?? {};
+  return Object.keys(others).length > 0 ? { ...rest, perAccount: others } : rest;
 }
 
 export const joinRotation = (paths, name) =>
   updateList(paths, (accounts) => (accounts.includes(name) ? accounts : [...accounts, name]));
 
 export const leaveRotation = (paths, name) =>
-  updateList(paths, (accounts) => accounts.filter((account) => account !== name));
+  updateList(
+    paths,
+    (accounts) => accounts.filter((account) => account !== name),
+    (rotation) => withoutLimits(rotation, name),
+  );

@@ -6,7 +6,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Alerts, SettingsMenu } from './types'
+import type { Alerts, Setting, SettingsMenu } from './types'
 
 const COMMAND = 'cc-account'
 const PANE = 'cc-account-config'
@@ -24,10 +24,15 @@ const ALERTS_MS = 60 * 1000
 const NOTICE_MS = 15 * 1000
 const RESUMED = 'An account has quota again: work can resume.'
 
+// The limits shown first: the ones every account follows unless it has its own.
+const ALL = 'all'
+
 // Change a tag when its fields change: it declines what an earlier version stored.
-const menu = atom({ plugin: 'cc-account', key: 'menu' } as const, { settings: [], error: null } as SettingsMenu, {
-  shape: 'menu-1',
-})
+const menu = atom(
+  { plugin: 'cc-account', key: 'menu' } as const,
+  { settings: [], error: null, scope: ALL } as SettingsMenu,
+  { shape: 'menu-2' },
+)
 const alerts = atom(
   { plugin: 'cc-account', key: 'alerts' } as const,
   { logins: [], hold: null, question: null, notices: true } as Alerts,
@@ -47,7 +52,13 @@ async function reload($: EngineInterface, error: string | null = null) {
   } catch {
     error = result.stderr.trim() || 'cc-account could not read the settings.'
   }
-  await update($, menu, () => ({ settings, error }))
+  await update($, menu, prior => ({ settings, error, scope: prior.scope }))
+}
+
+/** Whose limits to show: every account, then each account in the rotation, in the CLI's order. */
+function scopesOf(settings: Setting[]) {
+  const scopes = [...new Set(settings.flatMap(setting => (setting.scope ? [setting.scope] : [])))]
+  return scopes.map(scope => ({ value: scope, label: scope === ALL ? 'all accounts' : scope }))
 }
 
 /** Apply one change through the CLI, which owns every rule about it, then redraw. */
@@ -105,7 +116,9 @@ export const register: Register = on => {
       return { text: 'Settings opened: arrows move, Enter picks, Esc closes. Each change is saved at once.' }
     }
 
-    const argv = words.length === 0 ? ['list'] : SUBCOMMANDS.has(words[0]) ? words : ['use', ...words]
+    const [first, ...others] = words
+    const argv: [string, ...string[]] =
+      first === undefined ? ['list'] : SUBCOMMANDS.has(first) ? [first, ...others] : ['use', ...words]
     const opensBrowser = BROWSER_SUBCOMMANDS.has(argv[0])
     if (opensBrowser) $.ui.toast('A browser window is opening: sign in there to continue.')
     const result = await cli($, argv, opensBrowser ? BROWSER_MS : CLI_MS)
@@ -138,31 +151,52 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Select, Input, Button } = $.ui.resolve(e)
-    const { settings, error } = await read($, menu)
+    const { settings, error, scope: picked } = await read($, menu)
+    const scopes = scopesOf(settings)
+    // A scope gone since it was picked - an account left the rotation - falls back to every account.
+    const scope = scopes.some(option => option.value === picked) ? picked : ALL
+    const shown = settings.filter(setting => !setting.scope || setting.scope === scope)
+    // The scope picker heads the limit rows, which the CLI lists together.
+    const pickerAt = shown.findIndex(setting => setting.scope)
+
+    const rows = shown.map((setting, index) =>
+      setting.options ? (
+        <Select
+          key={setting.key}
+          label={setting.label}
+          options={setting.options}
+          value={setting.value}
+          autoFocus={index === 0 ? true : undefined}
+          onSelect={value => void change($, setting.key, value)}
+        />
+      ) : (
+        <Input
+          key={setting.key}
+          label={setting.label}
+          value={setting.value}
+          placeholder={setting.placeholder}
+          submitLabel="save"
+          onSubmit={value => void change($, setting.key, value)}
+        />
+      ),
+    )
+    if (pickerAt >= 0) {
+      rows.splice(
+        pickerAt,
+        0,
+        <Select
+          key="scope"
+          label="Limits for"
+          options={scopes}
+          value={scope}
+          onSelect={value => void update($, menu, prior => ({ ...prior, scope: value }))}
+        />,
+      )
+    }
 
     return (
       <Box flexDirection="column">
-        {settings.map((setting, index) =>
-          setting.options ? (
-            <Select
-              key={setting.key}
-              label={setting.label}
-              options={setting.options}
-              value={setting.value}
-              autoFocus={index === 0 ? true : undefined}
-              onSelect={value => void change($, setting.key, value)}
-            />
-          ) : (
-            <Input
-              key={setting.key}
-              label={setting.label}
-              value={setting.value}
-              placeholder={setting.placeholder}
-              submitLabel="save"
-              onSubmit={value => void change($, setting.key, value)}
-            />
-          ),
-        )}
+        {rows}
         {error && <Text color="red">{error}</Text>}
         <Button key="close" role="dismiss" onPress={() => void $.ui.close({ id: PANE })}>
           Close
