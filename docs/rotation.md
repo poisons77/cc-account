@@ -84,9 +84,9 @@ A bucket takes a plain percentage, or `{ "at", "lateAt", "lateWithinSecs" }` to 
 reset nears: percent abandoned early in a weekly window is gone for days, while the same percent
 just before a refill is nearly worthless.
 
-One account can have limits of its own: in `/cc-account config`, set **Limits for** to that account
-and pick its bars. Each one reads "as all accounts" until changed, and picking that again returns
-it to the shared value. Every other account keeps following the shared limits. In the config file
+One account can have limits of its own: in `/cc-account config`, open that account under
+**Limits** and pick its bars. Each one reads "as all accounts" until changed, and picking that again
+returns it to the shared value. Every other account keeps following the shared limits. In the config file
 this is `perAccount`, for example `"perAccount": { "work": { "seven_day": 80 } }`.
 
 The full field list, including per-window thresholds and the return grace period, is in

@@ -8,13 +8,16 @@ carries the same version: `/plugin update cc-account` to get it.
 
 **New**
 
-- `/cc-account config`: limits per account. "Limits for" picks every account or one account; an
-  account's own limit wins, and each row reads "as all accounts" until changed. Needs a cc-pace
-  release with `perAccount`.
+- `/cc-account config`: limits per account. Under **Limits**, "All accounts" and each account in
+  rotation open their own screen; an account's own limit wins, and each row reads "as all accounts"
+  until changed. Needs a cc-pace release with `perAccount`.
 - "Near" the weekly reset can be 3 days.
 
 **Changed**
 
+- `/cc-account config` works like Claude Code's own menus: one row per setting with its value,
+  Enter opens its choices with the current one ticked, Esc goes back a screen and closes the menu
+  from the main list.
 - Removing an account also removes its own limits.
 
 ## 0.5.0 - 2026-11-06

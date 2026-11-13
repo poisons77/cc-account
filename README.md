@@ -54,7 +54,7 @@ Restart the session; the command registers at startup:
 /cc-account current      re-sync identity after a manual /login
 /cc-account add work     sign a new account in through the browser and save it
 /cc-account renew work   sign that account in again through the browser
-/cc-account config       open the settings menu: arrows move, Enter picks, limits per account
+/cc-account config       open the settings menu: arrows move, Enter opens, Esc goes back
 ```
 
 The plugin also checks every saved login when a session starts, and names any that expire within

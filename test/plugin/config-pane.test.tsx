@@ -15,23 +15,33 @@ const SETTINGS = [
     ],
   },
   {
-    key: 'five_hour',
-    label: 'Switch at 5-hour use',
-    value: '95',
+    key: 'seven_day',
+    label: 'Switch at weekly use',
+    value: '90',
     scope: 'all',
     options: [
+      { value: '85', label: '85%' },
       { value: '90', label: '90%' },
-      { value: '95', label: '95%' },
     ],
   },
   {
-    key: 'limits.work.five_hour',
-    label: "'work' switches at 5-hour use",
-    value: 'same',
+    key: 'limits.work.seven_day',
+    label: "'work' switches at weekly use",
+    value: '85',
     scope: 'work',
     options: [
-      { value: 'same', label: 'as all accounts (95%)' },
-      { value: '80', label: '80%' },
+      { value: 'same', label: 'as all accounts (90%)' },
+      { value: '85', label: '85%' },
+    ],
+  },
+  {
+    key: 'limits.home.seven_day',
+    label: "'home' switches at weekly use",
+    value: 'same',
+    scope: 'home',
+    options: [
+      { value: 'same', label: 'as all accounts (90%)' },
+      { value: '85', label: '85%' },
     ],
   },
   { key: 'browser.work', label: "Browser that signs in 'work'", value: '', placeholder: 'a private window' },
@@ -61,6 +71,7 @@ function engine(on: Engine, { refuse = '', alerts = (): object => QUIET } = {}) 
   const runs: string[][] = []
   on('command.register', () => ({ value: { command: 'cc-account' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.focus', () => ({ value: {} }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('process.run', (_, e) => {
     const argv = [...e.argv]
@@ -73,8 +84,10 @@ function engine(on: Engine, { refuse = '', alerts = (): object => QUIET } = {}) 
   return runs
 }
 
+const ran = (runs: string[][], command: string) => runs.some(argv => argv.slice(-4).join(' ') === command)
+
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`/cc-account config opens a menu whose pick is saved through the CLI (${surface})`, async ($, on) => {
+  test(`the main list shows each setting with its value, and Enter opens its choices (${surface})`, async ($, on) => {
     const runs = engine(on)
     await $.session.start({ cwd: '/', surface, isInteractive: true })
 
@@ -82,45 +95,67 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(opened.text).toMatch(/Settings opened/)
 
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect(await ui.find({ type: 'Select', key: 'five_hour' })).toBeTruthy()
-    expect(await ui.find({ type: 'Input', key: 'browser.work' })).toBeTruthy()
+    expect((await ui.find({ type: 'Button', key: 'row:mode' }))?.text).toMatch(/Automatic rotation\s+between all accounts/)
+    expect((await ui.find({ type: 'Button', key: 'scope:all' }))?.text).toMatch(/All accounts\s+weekly 90%/)
+    expect((await ui.find({ type: 'Button', key: 'scope:work' }))?.text).toMatch(/work\s+weekly 85%/)
+    expect((await ui.find({ type: 'Button', key: 'scope:home' }))?.text).toMatch(/home\s+as all accounts/)
 
-    await $.ui.select({ plugin: 'cc-account', key: 'five_hour', value: '90' })
-    expect(runs.some(argv => argv.slice(-4).join(' ') === 'config set five_hour 90')).toBe(true)
+    await ui.press({ key: 'row:mode' })
+    expect((await ui.find({ type: 'Button', key: 'opt:peers' }))?.text).toBe('✔ between all accounts')
+    expect((await ui.find({ type: 'Button', key: 'opt:off' }))?.text).toBe('  off')
+    expect(await ui.find({ type: 'Button', key: 'row:mode' })).toBeFalsy()
+
+    await ui.press({ key: 'opt:off' })
+    expect(ran(runs, 'config set mode off')).toBe(true)
+    // A pick that took returns to the list it was opened from.
+    expect(await ui.find({ type: 'Button', key: 'row:mode' })).toBeTruthy()
     await ui.unmount()
   })
 
-  test(`limits show for every account until one account is picked (${surface})`, async ($, on) => {
+  test(`an account's limits open from the main list, and Back returns there (${surface})`, async ($, on) => {
     const runs = engine(on)
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ command: 'cc-account', args: 'config' })
-
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect(await ui.find({ type: 'Select', key: 'scope' })).toBeTruthy()
-    expect(await ui.find({ type: 'Select', key: 'five_hour' })).toBeTruthy()
-    expect(await ui.find({ type: 'Select', key: 'limits.work.five_hour' })).toBeFalsy()
 
-    await $.ui.select({ plugin: 'cc-account', key: 'scope', value: 'work' })
-    expect(await ui.find({ type: 'Select', key: 'five_hour' })).toBeFalsy()
-    expect(await ui.find({ type: 'Select', key: 'limits.work.five_hour' })).toBeTruthy()
-    // Rows outside the limits stay whatever the scope.
-    expect(await ui.find({ type: 'Select', key: 'mode' })).toBeTruthy()
+    await ui.press({ key: 'scope:work' })
+    expect(await ui.find({ type: 'Text', text: 'Limits for work' })).toBeTruthy()
+    expect(await ui.find({ type: 'Button', key: 'row:seven_day' })).toBeFalsy()
 
-    await $.ui.select({ plugin: 'cc-account', key: 'limits.work.five_hour', value: '80' })
-    expect(runs.some(argv => argv.slice(-4).join(' ') === 'config set limits.work.five_hour 80')).toBe(true)
+    await ui.press({ key: 'row:limits.work.seven_day' })
+    await ui.press({ key: 'opt:same' })
+    expect(ran(runs, 'config set limits.work.seven_day same')).toBe(true)
+    expect(await ui.find({ type: 'Text', text: 'Limits for work' })).toBeTruthy()
+
+    await ui.press({ key: 'back' })
+    expect(await ui.find({ type: 'Button', key: 'scope:work' })).toBeTruthy()
     await ui.unmount()
   })
 
-  test(`a change the CLI refuses is shown in the menu (${surface})`, async ($, on) => {
+  test(`a free-text setting opens a field of its own (${surface})`, async ($, on) => {
+    const runs = engine(on)
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ command: 'cc-account', args: 'config' })
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    await ui.press({ key: 'row:browser.work' })
+    await ui.input({ key: 'input:browser.work', text: 'firefox' })
+    expect(ran(runs, 'config set browser.work firefox')).toBe(true)
+    await ui.unmount()
+  })
+
+  test(`a change the CLI refuses stays on its screen, the reason shown (${surface})`, async ($, on) => {
     engine(on, { refuse: 'Rotation needs at least two saved accounts.' })
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ command: 'cc-account', args: 'config' })
 
     const ui = await $.ui.mount({ ...PANE, surface })
-    await $.ui.select({ plugin: 'cc-account', key: 'mode', value: 'off' })
+    await ui.press({ key: 'row:mode' })
+    await ui.press({ key: 'opt:off' })
 
     const error = await ui.find({ type: 'Text', text: /two saved accounts/ })
     expect(error?.text).toBe('Rotation needs at least two saved accounts.')
+    expect(await ui.find({ type: 'Button', key: 'opt:off' })).toBeTruthy()
     await ui.unmount()
   })
 }

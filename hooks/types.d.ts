@@ -13,9 +13,10 @@ export type Setting = {
 
 /**
  * What the settings pane draws: the rows, the refusal of the last change when there was one, and
- * whose limits are shown.
+ * the screens opened from the main list, innermost last: `limits:<scope>`, `pick:<key>` or
+ * `edit:<key>`. Empty is the main list.
  */
-export type SettingsMenu = { settings: Setting[]; error: string | null; scope: string }
+export type SettingsMenu = { settings: Setting[]; error: string | null; path: string[] }
 
 /** What every session is told, as `cc-account check --json` reports it; only the fields drawn are typed. */
 export type Alerts = {
