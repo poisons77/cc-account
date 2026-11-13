@@ -10,6 +10,7 @@ carries the same version: `/plugin update cc-account` to get it.
 
 - The README says how to update the npm install and the plugin, and that cc-pace is updated with
   them.
+- The rotation guide uses the global install throughout, the scheduled-task example included.
 
 ## 0.6.0 - 2026-11-13
 

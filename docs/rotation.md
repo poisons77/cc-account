@@ -18,12 +18,12 @@ npm install -g claude-code-pace
 Then point Claude Code's status line at it, in `~/.claude/settings.json`:
 
 ```json
-{ "statusLine": { "type": "command", "command": "cc-pace" } }
+{ "statusLine": { "type": "command", "command": "cc-pace", "refreshInterval": 60 } }
 ```
 
-`cc-pace --setup` prints that snippet. Both tools must be on `PATH`, because the rotation config
-names `cc-account` as a command; give an absolute path to `node` and to `bin/cc-account.js` instead
-if cc-account is not installed globally.
+`cc-pace --setup` prints that snippet. cc-account is installed globally too
+(`npm install -g cc-account`): the rotation config names `cc-account` as a command, which has to be
+on `PATH`.
 
 Rotation runs when the status line renders, so a status line that is not cc-pace runs no rotation.
 
@@ -77,8 +77,8 @@ refills.
 ```
 
 Account names are cc-account snapshot names, so each must exist - run `cc-account save` once per
-account first. `command` is invoked as `<command> use <account>`, and must be on `PATH`; give an
-absolute path to `node` and to `bin/cc-account.js` if cc-account is not installed globally.
+account first. `command` is invoked as `<command> use <account>`; `cc-account`, the global install,
+is also the default when `command` is left out.
 
 A bucket takes a plain percentage, or `{ "at", "lateAt", "lateWithinSecs" }` to raise the bar as the
 reset nears: percent abandoned early in a weekly window is gone for days, while the same percent
@@ -158,14 +158,15 @@ $ cc-account rotate
 For a one-shot return at a known reset time, a scheduled task covers it. On Windows:
 
 ```powershell
-$tr = '"C:\Program Files\nodejs\node.exe" "C:\path\to\cc-account\bin\cc-account.js" use work'
+$tr = '"' + (Get-Command cc-account.cmd).Source + '" use work'
 schtasks /Create /TN "cc-account-switchback" /SC ONCE /ST 17:32 /TR $tr /F
 
 schtasks /Query  /TN "cc-account-switchback" /FO LIST /V   # Last Result: 0 means it ran
 schtasks /Delete /TN "cc-account-switchback" /F
 ```
 
-Use the absolute path to `node.exe` - a scheduled task does not inherit the interactive `PATH`.
+`Get-Command` puts the global install's full path in the task: a scheduled task does not inherit
+the interactive `PATH`.
 Created this way the task runs only while the user is logged on; add `/RU` and `/RP` for a stored
 credential if it must fire from a locked session. The reset time to aim at is the one the status
 line already shows.
