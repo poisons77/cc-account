@@ -4,6 +4,13 @@ Every release since 0.4.0 is also on [GitHub Releases](https://github.com/poison
 and every release on npm as [`cc-account`](https://www.npmjs.com/package/cc-account). The plugin
 carries the same version: `/plugin update cc-account` to get it.
 
+## Unreleased
+
+**Changed**
+
+- The README says how to update the npm install and the plugin, and that cc-pace is updated with
+  them.
+
 ## 0.6.0 - 2026-11-13
 
 **New**

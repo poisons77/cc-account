@@ -90,8 +90,28 @@ Report the resulting account and nothing more.
 
 It calls `cc-account` on `PATH`, so it needs the npm install rather than the plugin one.
 
-Plugins do not auto-update. `/plugin update cc-account` pulls a newer commit; the npm install is
-the one that tracks releases.
+## Updating
+
+The npm install:
+
+```console
+npm install -g cc-account@latest
+npm ls -g cc-account
+```
+
+The plugin, from inside Claude Code:
+
+```
+/plugin marketplace update cc-account
+/plugin update cc-account@cc-account
+/reload-plugins
+```
+
+The plugin updates when a release raises its version. To have Claude Code fetch new releases at
+startup, turn on auto-update for the marketplace under `/plugin` > Marketplaces > cc-account.
+
+With both installed, update both. With cc-pace, update it too: `npm install -g
+claude-code-pace@latest`. [`CHANGELOG.md`](CHANGELOG.md) names the cc-pace version a release needs.
 
 ## Use
 
