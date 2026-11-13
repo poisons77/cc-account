@@ -4,13 +4,13 @@ Every release since 0.4.0 is also on [GitHub Releases](https://github.com/poison
 and every release on npm as [`cc-account`](https://www.npmjs.com/package/cc-account). The plugin
 carries the same version: `/plugin update cc-account` to get it.
 
-## Unreleased
+## 0.6.0 - 2026-11-13
 
 **New**
 
 - `/cc-account config`: limits per account. Under **Limits**, "All accounts" and each account in
   rotation open their own screen; an account's own limit wins, and each row reads "as all accounts"
-  until changed. Needs a cc-pace release with `perAccount`.
+  until changed. Needs cc-pace 0.7.0 or later.
 - "Near" the weekly reset can be 3 days.
 
 **Changed**

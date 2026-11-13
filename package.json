@@ -1,6 +1,6 @@
 {
   "name": "cc-account",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Switch Claude Code accounts in one command and keep working when one hits its usage limit: no browser login per switch, renewals before a login expires, automatic rotation with cc-pace. Zero dependencies.",
   "keywords": [
     "claude-code",
