@@ -64,18 +64,42 @@ export function writeCredentials(paths, blob) {
 }
 
 /**
- * When the login behind a blob stops refreshing, in epoch milliseconds, or null when the blob does
- * not say. Refreshing hands out a new refresh token but carries this date over unchanged, so only a
- * browser login moves it. This reads one field of a parsed copy; the blob itself is only ever
- * written back as the original string.
+ * A parsed copy of a blob, for reading one field out of it; null when it is not JSON. Nothing parsed
+ * here is ever written back: the blob itself only travels as the original string.
  */
-export function refreshTokenExpiry(blob) {
+function parseBlob(blob) {
   try {
-    const expiry = JSON.parse(blob)?.claudeAiOauth?.refreshTokenExpiresAt;
-    // Milliseconds are past 1e12 since 2001. A value in seconds would read as 1970 and flag every
-    // login as expired, so it counts as unknown instead.
-    return Number.isFinite(expiry) && expiry > 1e12 ? expiry : null;
+    return JSON.parse(blob);
   } catch {
     return null;
   }
+}
+
+/**
+ * An epoch-milliseconds time, or null. Milliseconds are past 1e12 since 2001; a value in seconds
+ * would read as 1970 and flag every login as expired, so it counts as unknown instead.
+ */
+const epochMs = (value) => (Number.isFinite(value) && value > 1e12 ? value : null);
+
+/**
+ * When the login behind a blob stops refreshing, in epoch milliseconds, or null when the blob does
+ * not say. Refreshing hands out a new refresh token but carries this date over unchanged, so only a
+ * browser login moves it.
+ */
+export function refreshTokenExpiry(blob) {
+  return epochMs(parseBlob(blob)?.claudeAiOauth?.refreshTokenExpiresAt);
+}
+
+/**
+ * The access token a blob holds, with the epoch milliseconds it expires at (null when it does not
+ * say), or null when there is none. Without `server` it is the claude.ai login's; with one, the
+ * login Claude Code keeps for that MCP server, under an `mcpOAuth` key that starts `<server>|`.
+ */
+export function accessToken(blob, server) {
+  const parsed = parseBlob(blob);
+  const entry = server
+    ? Object.entries(parsed?.mcpOAuth ?? {}).find(([key]) => key.split('|')[0] === server)?.[1]
+    : parsed?.claudeAiOauth;
+  if (typeof entry?.accessToken !== 'string' || entry.accessToken === '') return null;
+  return { token: entry.accessToken, expiresAt: epochMs(entry.expiresAt) };
 }

@@ -16,6 +16,7 @@ import {
   removeAccount,
   renewAccount,
   RESERVED_NAMES,
+  runClaude,
   saveAccount,
   setBrowser,
   slugify,
@@ -603,6 +604,19 @@ test('renew refuses an email the Windows shell would rewrite', { skip: process.p
   assert.throws(() => renewAccount(paths, 'work'), /Cannot pass %USERNAME%@example\.com to claude/);
 });
 
+test('a quoted argument reaches claude whole, unless cmd.exe would act on part of it', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
+  const json = JSON.stringify({ type: 'http', url: 'https://example.com/mcp', headersHelper: 'cc-account header work' });
+  runClaude(['mcp', 'add-json', '--scope', 'user', 'probe', json], { stdio: 'ignore' });
+  assert.deepEqual(readJson(paths.configJson).mcpServers.probe, JSON.parse(json));
+
+  assert.throws(
+    () => runClaude(['mcp', 'add-json', 'probe', JSON.stringify({ url: 'https://example.com/?a=1&b=2' })]),
+    /Cannot pass .* to claude through the Windows shell/,
+  );
+  // A quote in one argument flips cmd.exe's quoting for the rest of the line too.
+  assert.throws(() => runClaude(['mcp', 'add-json', '{"a":"b', 'x&calc']), /Cannot pass x&calc to claude/);
+});
+
 test('add saves whoever signs in and leaves the live account alone', needsFileBackend, async () => {
   login(paths, 'personal@example.com');
   saveAccount(paths, 'personal');
@@ -761,7 +775,7 @@ test('remove deletes the snapshot and takes it out of the cc-pace rotation', nee
 
   const result = removeAccount(paths, 'work');
 
-  assert.deepEqual(result, { email: 'work@example.com', rotation: 'left' });
+  assert.deepEqual(result, { email: 'work@example.com', detached: [], rotation: 'left' });
   assert.equal(fs.existsSync(snapshotDir('work')), false);
   assert.deepEqual(readJson(paths.paceConfig).rotation.accounts, ['personal']);
 });

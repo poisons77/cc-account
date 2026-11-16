@@ -43,6 +43,14 @@ export function resolvePaths(
     // that dies halfway never shows up as an account.
     loginScratch: path.join(tmp, 'cc-account-login-'),
     privateBrowsers: privateBrowsers(env, platform),
+    // Anthropic's API, asked for an account's claude.ai connectors; tests point it at a local server.
+    apiBase: env.CC_ACCOUNT_API_BASE ?? 'https://api.anthropic.com',
+    // Where an npm-installed `cc-account` would be found by name. Attached connectors call it so,
+    // since the plugin's own copy moves with every plugin update.
+    cliOnPath: (env.PATH ?? '')
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map((dir) => path.join(dir, platform === 'win32' ? 'cc-account.cmd' : 'cc-account')),
   };
 }
 

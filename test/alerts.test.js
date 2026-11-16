@@ -39,6 +39,21 @@ test('a login is a warning inside three days, urgent inside its last hour, then 
   assert.equal(expiryLevel(now, now), 'expired');
 });
 
+test('a lane whose login ends soon is an alert of its own, marked as the lane', () => {
+  const now = Date.now();
+  const meta = { email: 'work@example.com' };
+  fs.mkdirSync(path.join(paths.store, 'work', 'lane'), { recursive: true });
+  fs.writeFileSync(path.join(paths.store, 'work', 'meta.json'), JSON.stringify(meta));
+  fs.writeFileSync(path.join(paths.store, 'work', '.credentials.json'), JSON.stringify({}));
+  const laneEnd = now + EXPIRY_URGENT_MS - 1000;
+  fs.writeFileSync(
+    path.join(paths.store, 'work', 'lane', '.credentials.json'),
+    JSON.stringify({ claudeAiOauth: { refreshTokenExpiresAt: laneEnd } }),
+  );
+
+  assert.deepEqual(alerts(paths, now).logins, [{ name: 'work', meta, expiresAt: laneEnd, level: 'urgent', lane: true }]);
+});
+
 test('work holds only when no account is eligible, and names the first to free up', () => {
   assert.equal(holdOf([], NOW), null);
   assert.equal(holdOf([spent('work', NOW + 60), { name: 'personal', eligible: true }], NOW), null);

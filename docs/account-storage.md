@@ -43,6 +43,8 @@ rest lives in `~/.claude`.
     .credentials.json    token blob, copied verbatim and never parsed
     oauthAccount.json    identity
     meta.json            email, plan, authMethod, savedAt, browser
+    connectors.json      cached list of the account's claude.ai connectors
+    lane/                a second login of the account, once a connector is attached
 ```
 
 `meta.json` is the index. The active account is the one whose email matches
@@ -86,6 +88,34 @@ The browser comes from `meta.json` → `browser` when set, and otherwise from th
 Edge and Firefox found installed, opened in a private window. Claude Code starts it through the
 `BROWSER` variable. With none found, Claude Code prints the sign-in link to open by hand.
 
+## Lanes and connectors
+
+A lane is a Claude Code config directory of its own, `~/.claude-accounts/<name>/lane/`, holding a
+separate browser login of the account. It is never a copy of the snapshot: two copies of one login
+would refresh apart and one would end on a dead token. `lane <name>` signs it in, and signing it in
+again moves its expiry, 30 days out like any other login. The first `attach` for an account signs it
+in, through the same private window and email check as `renew`.
+
+What it touches:
+
+| What | How |
+|---|---|
+| `<name>/lane/` | Written by Claude Code's own login and token renewal; cc-account never writes a token into it |
+| `<name>/connectors.json` | The account's claude.ai connectors, cached by `connectors --refresh` and `attach` |
+| `~/.claude.json` → `mcpServers` | One user-scope entry per attached connector, named `<connector>-<name>`, written and removed only through `claude mcp add-json` and `claude mcp remove`. Other entries stay untouched |
+
+`detach` removes one entry. `remove <name>` detaches every connector of the account and deletes its
+lane along with the snapshot.
+
+A session starts an attached connector by calling `cc-account`: `cc-account header` prints the
+authorization headers of a claude.ai connector or an added server, and `cc-account chrome` starts
+Claude in Chrome. Claude Code renews the lane's tokens when its servers connect, and cc-account asks
+for that shortly before a token ends.
+
+The one request cc-account makes itself lists an account's claude.ai connectors from Anthropic, read
+only, with the lane's token. It runs when connectors are listed afresh or attached, never while a
+session works. Everything else is Claude Code's.
+
 ## Which accounts can be switched
 
 | Mode | Login | Identity lives in | Switchable |
@@ -104,3 +134,15 @@ backups, and repositories.
 
 Logging out of an account on the web **does not revoke a stored refresh token**: a snapshot taken
 beforehand still authenticates. Delete the snapshot directory to retire an account from this machine.
+
+A lane's token is handed to a session only for that account's own connectors, and `header` refuses to
+print it when the lane is signed in as any other account, so one account's connector never opens
+another's data. The lane directory is live credentials too: the same rules as the snapshot apply.
+
+## Limits
+
+- Lanes are not available on macOS, for the reason `renew` is not: the login would write to the
+  shared Keychain.
+- Only connectors an account has set up on claude.ai, HTTP servers added in Claude Code, and Claude in
+  Chrome are offered. A server defined only in a project's `.mcp.json` is not.
+- Attached connectors call `cc-account` by name, so they need the npm install on `PATH`.

@@ -42,6 +42,9 @@ export function sandbox() {
     PATH: process.env.PATH,
     FAKE_BROWSER_ACCOUNT: process.env.FAKE_BROWSER_ACCOUNT,
     FAKE_RENEWED_EXPIRY: process.env.FAKE_RENEWED_EXPIRY,
+    FAKE_RENEW_LOG: process.env.FAKE_RENEW_LOG,
+    FAKE_RENEW_MS: process.env.FAKE_RENEW_MS,
+    CC_ACCOUNT_API_BASE: process.env.CC_ACCOUNT_API_BASE,
   };
 
   process.env.CLAUDE_CONFIG_DIR = path.join(root, 'config');

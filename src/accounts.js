@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { BROWSER_COMMAND_ENV, browserCommand, writeBrowserShim } from './browser.js';
+import { detachAll } from './connectors.js';
 import {
   readCredentials,
   refreshTokenExpiry,
@@ -23,7 +24,10 @@ const META = 'meta.json';
  * these would be reachable from the CLI but not from the slash command, so it is refused at save
  * time rather than left as a trap to discover later.
  */
-export const RESERVED_NAMES = ['rotate', 'current', 'status', 'renew', 'add', 'remove', 'config'];
+export const RESERVED_NAMES = [
+  'rotate', 'current', 'status', 'renew', 'add', 'remove', 'config',
+  'lane', 'connectors', 'attach', 'detach',
+];
 
 /** How far ahead of a login's expiry to start asking for a renewal. Claude Code warns at 3 days. */
 export const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000;
@@ -44,21 +48,34 @@ export function expiryLevel(expiresAt, now = Date.now()) {
 }
 
 const SHELL_SAFE = /^[\w@+=:,./-]+$/;
+// What cmd.exe acts on outside quotes. A quote inside an argument switches cmd.exe's quoting off and
+// on again, so an argument holding one is passed only when none of these is in it.
+const CMD_ACTIVE = /[%&|<>^!]/;
+
+/**
+ * One argument for the Windows shell, quoted for the program behind it, or refused. `quoted` says
+ * whether any argument of the line holds a quote: cmd.exe's quoting then flips at each one, so
+ * nothing in the whole line may mean something to cmd.exe.
+ */
+function windowsArg(arg, quoted) {
+  if (SHELL_SAFE.test(arg)) return arg;
+  // Quotes do not stop cmd.exe expanding %VAR%, and a quote inside the argument ends them.
+  if (arg.includes('%') || (quoted && CMD_ACTIVE.test(arg))) {
+    throw new Error(`Cannot pass ${arg} to claude through the Windows shell.`);
+  }
+  // The program reads \" as a quote, and doubles any backslash run before a quote or the end.
+  return `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
+}
 
 /**
  * Run the `claude` CLI, resolved the way a terminal resolves it. On Windows that takes the shell:
  * a direct spawn cannot run the npm `.cmd` shim and looks only for `.exe` files, so it would skip
  * a `claude.cmd` earlier on PATH and run whichever `claude.exe` comes later.
  */
-function runClaude(args, options) {
+export function runClaude(args, options) {
   if (process.platform !== 'win32') return spawnSync('claude', args, options);
-  const command = ['claude', ...args].map((arg) => {
-    if (SHELL_SAFE.test(arg)) return arg;
-    // Quotes do not stop cmd.exe expanding %VAR%, and a quote inside the argument ends them.
-    if (/["%]/.test(arg)) throw new Error(`Cannot pass ${arg} to claude through the Windows shell.`);
-    return `"${arg}"`;
-  });
-  return spawnSync(command.join(' '), { ...options, shell: true });
+  const quoted = args.some((arg) => arg.includes('"'));
+  return spawnSync(['claude', ...args].map((arg) => windowsArg(arg, quoted)).join(' '), { ...options, shell: true });
 }
 
 /**
@@ -83,7 +100,7 @@ export const loggedInEmail = (status) => (status?.loggedIn ? (status.email ?? nu
 
 export const slugify = (email) => String(email).split('@')[0].replace(/[^A-Za-z0-9._-]/g, '-');
 
-const accountDir = (paths, name) => path.join(paths.store, name);
+export const accountDir = (paths, name) => path.join(paths.store, name);
 
 export function listAccounts(paths) {
   let entries;
@@ -106,7 +123,7 @@ export function findByEmail(paths, email) {
 }
 
 /** The snapshot's `meta.json`, or an error naming the accounts that do exist. */
-function requireSnapshot(paths, name) {
+export function requireSnapshot(paths, name) {
   const dir = accountDir(paths, name);
   if (!fs.existsSync(path.join(dir, CREDENTIALS_SNAPSHOT))) {
     const known = listAccounts(paths).map((account) => account.name);
@@ -269,8 +286,9 @@ export function saveAccount(paths, name) {
 }
 
 /**
- * Delete a snapshot and take it out of cc-pace's rotation. The live account is refused: its
- * snapshot would come straight back on the next switch away.
+ * Delete a snapshot, with its lane, take its connectors out of every session and take it out of
+ * cc-pace's rotation. The live account is refused: its snapshot would come straight back on the
+ * next switch away.
  */
 export function removeAccount(paths, name) {
   const meta = requireSnapshot(paths, name);
@@ -279,9 +297,20 @@ export function removeAccount(paths, name) {
     throw new Error(`'${name}' is the live account. Switch away from it first, then remove it.`);
   }
 
-  fs.rmSync(accountDir(paths, name), { recursive: true, force: true });
+  // Moved aside first, in one step: a lane still in use by a running Chrome server holds files
+  // open on Windows, and a delete stopped halfway would leave a listed account with no snapshot.
+  const dir = accountDir(paths, name);
+  const aside = `${dir}.removing-${process.pid}`;
+  try {
+    fs.renameSync(dir, aside);
+  } catch {
+    throw new Error(`'${name}' is in use: close the sessions using its connectors, then remove it. Nothing was changed.`);
+  }
+  // A connector left attached would ask a lane that no longer exists.
+  const detached = detachAll(paths, name);
+  fs.rmSync(aside, { recursive: true, force: true, maxRetries: 5 });
   publishLogins(paths, liveEmail);
-  return { email: meta.email ?? null, rotation: syncRotation(leaveRotation, paths, name, 'left') };
+  return { email: meta.email ?? null, detached, rotation: syncRotation(leaveRotation, paths, name, 'left') };
 }
 
 /**
@@ -347,7 +376,7 @@ export function setBrowser(paths, name, command) {
   writeJsonAtomic(metaFile, command ? { ...meta, browser: command } : meta);
 }
 
-function refuseOnKeychain(command) {
+export function refuseOnKeychain(command) {
   if (usesKeychain()) {
     throw new Error(
       `${command} is not available on macOS: a login there writes to the shared Keychain, which ` +
@@ -367,17 +396,19 @@ function refuseTaken(paths, name) {
 /**
  * Run a browser login in a throwaway config dir, so the live session is never touched while it is
  * in progress, and return who signed in with the login it left. `email`, when known, is passed as
- * the login hint; `label` names the login in errors.
+ * the login hint; `label` names the login in errors. `dir`, when given, is the config dir the login
+ * lands in instead, and outlives the call.
  *
  * `onLogin(command, email)` runs just before the login starts; `command` is null when no browser
  * was found.
  */
-function browserLogin(paths, { email, browser, label, onLogin }) {
+export function browserLogin(paths, { email, browser, label, onLogin, dir }) {
   const command = browserCommand(paths, { browser });
   sweepStaleScratch(paths);
+  // Always made: it holds the BROWSER shim, and the login itself when no `dir` is given.
   const scratch = fs.mkdtempSync(paths.loginScratch);
   try {
-    const confined = confinedTo(scratch);
+    const confined = confinedTo(dir ?? scratch);
     onLogin(command, email);
     runClaude(['auth', 'login', ...(email ? ['--email', email] : [])], {
       stdio: 'inherit',

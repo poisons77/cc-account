@@ -61,14 +61,35 @@ const PANE = {
   },
 } as const
 
+const LANE = { dir: '/lanes/work', email: 'me@company.com', expiresAt: 1_900_000_000 }
+const CONNECTORS = [
+  {
+    name: 'work',
+    lane: LANE,
+    connectors: [
+      { slug: 'chrome', label: 'Claude in Chrome', kind: 'chrome', attachedAs: 'chrome-work', attached: true },
+      { slug: 'gmail', label: 'Gmail', kind: 'claude-ai', attachedAs: 'gmail-work', attached: false },
+      { slug: 'tracker', label: 'Tracker', kind: 'server', attachedAs: 'tracker-work', attached: false, needsLogin: true },
+    ],
+  },
+  {
+    name: 'home',
+    lane: null,
+    connectors: [{ slug: 'gmail', label: 'Gmail', kind: 'claude-ai', attachedAs: 'gmail-home', attached: false }],
+  },
+]
+const ATTACHED = "Attached 'gmail-work'. New sessions have it; in a running one, run /mcp."
+const TERMINAL = "Sign in 'tracker' made in a terminal:\n  claude mcp login tracker-work\n  claude mcp list"
+
 const QUIET = { logins: [], hold: null, notices: true }
 const HOLD = { text: "All accounts are out of quota: hold off on new work. 'work' frees up Sun 8 Nov 07:00." }
 
 type Engine = Parameters<Parameters<typeof test>[1]>[1]
 
 /** `alerts` is what `check --json` answers; a function answers each poll in turn. */
-function engine(on: Engine, { refuse = '', alerts = (): object => QUIET } = {}) {
+function engine(on: Engine, { refuse = '', alerts = (): object => QUIET, attachOutput = ATTACHED } = {}) {
   const runs: string[][] = []
+  const attached = new Map(CONNECTORS.flatMap(a => a.connectors.map(c => [`${a.name} ${c.slug}`, c.attached] as const)))
   on('command.register', () => ({ value: { command: 'cc-account' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.focus', () => ({ value: {} }))
@@ -77,14 +98,29 @@ function engine(on: Engine, { refuse = '', alerts = (): object => QUIET } = {}) 
     const argv = [...e.argv]
     runs.push(argv)
     if (argv.includes('check')) return { value: { stdout: JSON.stringify(alerts()), stderr: '', exitCode: 0 } }
+    if (argv.includes('connectors')) {
+      const accounts = CONNECTORS.map(a => ({
+        ...a,
+        connectors: a.connectors.map(c => ({ ...c, attached: attached.get(`${a.name} ${c.slug}`) ?? false })),
+      }))
+      return { value: { stdout: JSON.stringify(accounts), stderr: '', exitCode: 0 } }
+    }
     if (argv.includes('--json')) return { value: { stdout: JSON.stringify(SETTINGS), stderr: '', exitCode: 0 } }
+    const verb = argv.at(-3)
+    if (verb === 'attach' || verb === 'detach') {
+      if (refuse) return { value: { stdout: '', stderr: refuse, exitCode: 1 } }
+      attached.set(`${argv.at(-2)} ${argv.at(-1)}`, verb === 'attach')
+      const stdout = verb === 'attach' ? attachOutput : "Detached 'gmail-work'. In a running session, run /mcp."
+      return { value: { stdout, stderr: '', exitCode: 0 } }
+    }
     if (refuse) return { value: { stdout: '', stderr: refuse, exitCode: 1 } }
     return { value: { stdout: 'Set.', stderr: '', exitCode: 0 } }
   })
   return runs
 }
 
-const ran = (runs: string[][], command: string) => runs.some(argv => argv.slice(-4).join(' ') === command)
+const ran = (runs: string[][], command: string) =>
+  runs.some(argv => argv.slice(-command.split(' ').length).join(' ') === command)
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`the main list shows each setting with its value, and Enter opens its choices (${surface})`, async ($, on) => {
@@ -156,6 +192,75 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const error = await ui.find({ type: 'Text', text: /two saved accounts/ })
     expect(error?.text).toBe('Rotation needs at least two saved accounts.')
     expect(await ui.find({ type: 'Button', key: 'opt:off' })).toBeTruthy()
+    await ui.unmount()
+  })
+
+  test(`the main list summarises each account's connectors (${surface})`, async ($, on) => {
+    engine(on)
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ command: 'cc-account', args: 'config' })
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    expect(await ui.find({ type: 'Text', text: 'Connectors' })).toBeTruthy()
+    expect((await ui.find({ type: 'Button', key: 'account:work' }))?.text).toMatch(/work\s+chrome ✓$/)
+    expect((await ui.find({ type: 'Button', key: 'account:home' }))?.text).toMatch(/home\s+not signed in/)
+    await ui.unmount()
+  })
+
+  test(`an account's connectors open with ticks, a toggle attaches or detaches, Esc returns (${surface})`, async ($, on) => {
+    const runs = engine(on)
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ command: 'cc-account', args: 'config' })
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    await ui.press({ key: 'account:work' })
+    expect(await ui.find({ type: 'Text', text: 'Connectors of work' })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /every session as/ })).toBeTruthy()
+    expect((await ui.find({ type: 'Button', key: 'conn:chrome' }))?.text).toBe('✔ Claude in Chrome')
+    expect((await ui.find({ type: 'Button', key: 'conn:gmail' }))?.text).toBe('  Gmail')
+    expect((await ui.find({ type: 'Button', key: 'conn:tracker' }))?.text).toMatch(/Tracker \(needs its own sign-in\)/)
+
+    await ui.press({ key: 'conn:gmail' })
+    expect(ran(runs, 'attach work gmail')).toBe(true)
+    expect((await ui.find({ type: 'Button', key: 'conn:gmail' }))?.text).toBe('✔ Gmail')
+    expect(await ui.find({ type: 'Text', text: /Running sessions pick it up with \/mcp/ })).toBeTruthy()
+
+    await ui.press({ key: 'conn:chrome' })
+    expect(ran(runs, 'detach work chrome')).toBe(true)
+    expect((await ui.find({ type: 'Button', key: 'conn:chrome' }))?.text).toBe('  Claude in Chrome')
+
+    await ui.press({ key: 'back' })
+    expect(await ui.find({ type: 'Button', key: 'account:work' })).toBeTruthy()
+    await ui.unmount()
+  })
+
+  test(`attaching with no sign-in yet toasts the browser, a refusal shows red (${surface})`, async ($, on) => {
+    const runs = engine(on, { refuse: 'No Claude in Chrome on this machine.' })
+    const shown = toasts(on)
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ command: 'cc-account', args: 'config' })
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    await ui.press({ key: 'account:home' })
+    await ui.press({ key: 'conn:gmail' })
+    expect(ran(runs, 'attach home gmail')).toBe(true)
+    expect(shown).toContain('A browser window is opening: sign in there to continue.')
+    expect((await ui.find({ type: 'Text', text: /No Claude in Chrome/ }))?.text).toBe('No Claude in Chrome on this machine.')
+    expect((await ui.find({ type: 'Button', key: 'conn:gmail' }))?.text).toBe('  Gmail')
+    await ui.unmount()
+  })
+
+  test(`lines to run in a terminal are shown as a note (${surface})`, async ($, on) => {
+    engine(on, { attachOutput: TERMINAL })
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ command: 'cc-account', args: 'config' })
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    await ui.press({ key: 'account:work' })
+    await ui.press({ key: 'conn:tracker' })
+    const note = await ui.find({ type: 'Text', text: /made in a terminal:/ })
+    expect(note?.text).toBe(TERMINAL)
+    expect(await ui.find({ type: 'Text', text: /Running sessions pick it up/ })).toBeFalsy()
     await ui.unmount()
   })
 }

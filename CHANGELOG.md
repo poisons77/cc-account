@@ -6,6 +6,22 @@ carries the same version: `/plugin update cc-account` to get it.
 
 ## Unreleased
 
+**New**
+
+- Every session can use the connectors of any saved account, whichever account is live: its Claude
+  in Chrome, its claude.ai connectors (Gmail, Drive, Calendar...) and the HTTP servers added in
+  Claude Code. `cc-account attach work gmail` makes it `gmail-work` in every session; `detach` takes
+  it out, and `connectors` shows what each account can lend. Needs the npm install.
+- The first connector of an account signs in a second login of that account, its lane, in a private
+  browser window. It lasts 30 days; `cc-account lane work` renews it, and it is warned about three
+  days ahead and in red in its last hour, like any other login.
+- A Chrome connector costs a session about 45 MB until the session first uses the browser.
+- `/cc-account config` has a Connectors screen per account: a tick beside each attached connector,
+  Enter attaches or detaches it.
+- Removing an account also takes its connectors out of every session.
+- cc-account now makes one read-only request to Anthropic, to list an account's claude.ai
+  connectors, and only when connectors are attached or listed afresh.
+
 **Changed**
 
 - The README says how to update the npm install and the plugin, and that cc-pace is updated with

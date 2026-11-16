@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 
 import { browserCommand, writeBrowserShim } from '../src/browser.js';
-import { refreshTokenExpiry } from '../src/credentials.js';
+import { accessToken, refreshTokenExpiry } from '../src/credentials.js';
 
 let dir;
 
@@ -70,4 +70,30 @@ test('refreshTokenExpiry is null for a blob that does not say, or is not JSON', 
   // Seconds, not milliseconds: would read as 1970 and flag every login as expired.
   assert.equal(refreshTokenExpiry(JSON.stringify({ claudeAiOauth: { refreshTokenExpiresAt: 1_790_000_000 } })), null);
   assert.equal(refreshTokenExpiry(null), null);
+});
+
+const LANE_BLOB = JSON.stringify({
+  claudeAiOauth: { accessToken: 'claude-token', expiresAt: 1_790_000_000_000 },
+  mcpOAuth: {
+    'goematic|4f2a': { serverName: 'goematic', accessToken: 'goematic-token', expiresAt: 1_790_000_100_000 },
+    'goematic-other|9c1b': { accessToken: 'other-token', expiresAt: 1_790_000_200_000 },
+  },
+});
+
+test('accessToken reads the claude.ai login, or the login of one MCP server', () => {
+  assert.deepEqual(accessToken(LANE_BLOB), { token: 'claude-token', expiresAt: 1_790_000_000_000 });
+  // The server name is matched whole: goematic is not goematic-other.
+  assert.deepEqual(accessToken(LANE_BLOB, 'goematic'), { token: 'goematic-token', expiresAt: 1_790_000_100_000 });
+});
+
+test('accessToken is null for a server with no login, or a blob that is not JSON', () => {
+  assert.equal(accessToken(LANE_BLOB, 'gmail'), null);
+  assert.equal(accessToken(JSON.stringify({ claudeAiOauth: { accessToken: '' } })), null);
+  assert.equal(accessToken('not json'), null);
+  assert.equal(accessToken(null), null);
+  // A token whose expiry is not in milliseconds is still a token; only its expiry is unknown.
+  assert.deepEqual(accessToken(JSON.stringify({ claudeAiOauth: { accessToken: 't', expiresAt: 1_790_000_000 } })), {
+    token: 't',
+    expiresAt: null,
+  });
 });

@@ -6,7 +6,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Alerts, Setting, SettingsMenu } from './types'
+import type { AccountConnectors, Alerts, Connector, Setting, SettingsMenu } from './types'
 
 const COMMAND = 'cc-account'
 const PANE = 'cc-account-config'
@@ -16,8 +16,12 @@ const CLI_MS = 2 * 60 * 1000
 
 // The first word picks the subcommand; anything else is an account name to switch to. These words
 // are RESERVED_NAMES in src/accounts.js, so no account can carry one.
-const SUBCOMMANDS = new Set(['rotate', 'current', 'status', 'renew', 'add', 'remove', 'config'])
-const BROWSER_SUBCOMMANDS = new Set(['renew', 'add'])
+const SUBCOMMANDS = new Set([
+  'rotate', 'current', 'status', 'renew', 'add', 'remove', 'config',
+  'lane', 'connectors', 'attach', 'detach',
+])
+// These may wait for a sign-in in the browser; attach does when the account has no lane yet.
+const BROWSER_SUBCOMMANDS = new Set(['renew', 'add', 'lane', 'attach'])
 
 // How often each session asks whether a login is ending or every account is out of quota.
 const ALERTS_MS = 60 * 1000
@@ -34,8 +38,8 @@ const LABEL_COLUMN = 44
 // Change a tag when its fields change: it declines what an earlier version stored.
 const menu = atom(
   { plugin: 'cc-account', key: 'menu' } as const,
-  { settings: [], error: null, path: [] } as SettingsMenu,
-  { shape: 'menu-3' },
+  { settings: [], error: null, path: [], connectors: [], note: null } as SettingsMenu,
+  { shape: 'menu-4' },
 )
 const alerts = atom(
   { plugin: 'cc-account', key: 'alerts' } as const,
@@ -57,6 +61,41 @@ async function reload($: EngineInterface, error: string | null = null) {
     error = result.stderr.trim() || 'cc-account could not read the settings.'
   }
   await update($, menu, prior => ({ ...prior, settings, error }))
+}
+
+/** Read every account's connectors again; an unreadable answer leaves the list empty. */
+async function loadConnectors($: EngineInterface) {
+  const result = await cli($, ['connectors', '--json'])
+  let connectors: SettingsMenu['connectors'] = []
+  try {
+    connectors = JSON.parse(result.stdout)
+  } catch {
+    connectors = []
+  }
+  await update($, menu, prior => ({ ...prior, connectors }))
+}
+
+/** What the connectors row of an account says: the ones attached, or why none is. */
+function connectorsSummary(account: AccountConnectors) {
+  if (!account.lane) return 'not signed in'
+  const attached = account.connectors.filter(connector => connector.attached)
+  return attached.length > 0 ? attached.map(connector => `${connector.slug} ✓`).join(' · ') : 'none attached'
+}
+
+const TERMINAL_LINES = 'made in a terminal:'
+
+/** Attach or detach one connector through the CLI, then redraw the screen with what it said. */
+async function toggleConnector($: EngineInterface, account: AccountConnectors, connector: Connector) {
+  const action = connector.attached ? 'detach' : 'attach'
+  const signsIn = action === 'attach' && !account.lane
+  if (signsIn) $.ui.toast('A browser window is opening: sign in there to continue.')
+  const result = await cli($, [action, account.name, connector.slug], signsIn ? BROWSER_MS : CLI_MS)
+  await loadConnectors($)
+  const output = result.stdout.trim()
+  const error = result.exitCode === 0 ? null : result.stderr.trim() || `Could not ${action} ${connector.slug}.`
+  const note = error ? null : output.includes(TERMINAL_LINES) ? output : 'Done. Running sessions pick it up with /mcp.'
+  await update($, menu, prior => ({ ...prior, error, note }))
+  focusOn($, `conn:${connector.slug}`)
 }
 
 /** Every account, then each account in the rotation, in the CLI's order. */
@@ -92,7 +131,8 @@ function limitsSummary(settings: Setting[], scope: string) {
 /** The row a screen was opened from, to put the focus back on when it closes. */
 function rowOf(screen: string) {
   const [kind, rest] = [screen.slice(0, screen.indexOf(':')), screen.slice(screen.indexOf(':') + 1)]
-  return kind === 'limits' ? `scope:${rest}` : `row:${rest}`
+  if (kind === 'limits') return `scope:${rest}`
+  return kind === 'connectors' ? `account:${rest}` : `row:${rest}`
 }
 
 /**
@@ -105,7 +145,7 @@ function focusOn($: EngineInterface, key: string) {
 
 /** Open a screen over the current one and put the focus on `focus`, drawn there. */
 async function forward($: EngineInterface, screen: string, focus: string) {
-  await update($, menu, prior => ({ ...prior, error: null, path: [...prior.path, screen] }))
+  await update($, menu, prior => ({ ...prior, error: null, note: null, path: [...prior.path, screen] }))
   focusOn($, focus)
 }
 
@@ -114,7 +154,7 @@ async function back($: EngineInterface) {
   let closed: string | undefined
   await update($, menu, prior => {
     closed = prior.path.at(-1)
-    return { ...prior, error: null, path: prior.path.slice(0, -1) }
+    return { ...prior, error: null, note: null, path: prior.path.slice(0, -1) }
   })
   return closed
 }
@@ -175,8 +215,9 @@ export const register: Register = on => {
     await $.command.register({
       name: COMMAND,
       description:
-        'Switch the active Claude Code account, rotate to the next one, add, renew or remove a login, change the rotation settings, or show which is in use and what each account has left',
-      argumentHint: '[rotate | current | status | config | add [account-name] | renew account-name | remove account-name | account-name]',
+        'Switch the active Claude Code account, rotate to the next one, add, renew or remove a login, change the rotation settings, choose the connectors each account carries, or show which is in use and what each account has left',
+      argumentHint:
+        '[rotate | current | status | config | connectors | attach account connector | detach account connector | lane account | add [account-name] | renew account-name | remove account-name | account-name]',
     })
     return started
   })
@@ -185,8 +226,9 @@ export const register: Register = on => {
     const words = e.args.trim().split(/\s+/).filter(Boolean)
 
     if (words.length === 1 && words[0] === 'config') {
-      await update($, menu, prior => ({ ...prior, path: [] }))
+      await update($, menu, prior => ({ ...prior, path: [], note: null }))
       await reload($)
+      await loadConnectors($)
       await openPane($)
       return { text: 'Settings opened: arrows move, Enter opens, Esc goes back. Each change is saved at once.' }
     }
@@ -240,12 +282,13 @@ export const register: Register = on => {
   // screen it opens lists the choices with the current one ticked.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Input, Button } = $.ui.resolve(e)
-    const { settings, error, path } = await read($, menu)
+    const { settings, error, path, connectors, note } = await read($, menu)
     const scopes = scopesOf(settings)
     const screen = path.at(-1) ?? ''
     const kind = screen.slice(0, screen.indexOf(':'))
     const target = screen.slice(screen.indexOf(':') + 1)
     const setting = settings.find(candidate => candidate.key === target)
+    const account = connectors.find(candidate => candidate.name === target)
 
     const listRow = (key: string, label: string, value: string, onPress: () => void, isFirst: boolean) => (
       <Button key={key} plain autoFocus={isFirst ? true : undefined} onPress={onPress}>
@@ -307,6 +350,32 @@ export const register: Register = on => {
         </Text>,
         ...settings.filter(row => row.scope === target).map(settingRow),
       ]
+    } else if (kind === 'connectors' && account) {
+      body = [
+        heading(`Connectors of ${account.name}`),
+        <Text key="connectors-note" dimColor>
+          {`Each one ticked is in every session as <slug>-${account.name}.`}
+        </Text>,
+        ...account.connectors.map((connector, index) => (
+          <Button
+            key={`conn:${connector.slug}`}
+            plain
+            autoFocus={index === 0 ? true : undefined}
+            onPress={() => void toggleConnector($, account, connector)}
+          >
+            {connector.attached ? '✔ ' : '  '}
+            {connector.label}
+            {connector.needsLogin && <Text dimColor> (needs its own sign-in)</Text>}
+          </Button>
+        )),
+        ...(note
+          ? [
+              <Text key="connectors-done" dimColor>
+                {note}
+              </Text>,
+            ]
+          : []),
+      ]
     } else {
       // The main list; also what a screen gone since it opened shows, such as an account's limits
       // after it left the rotation.
@@ -330,6 +399,20 @@ export const register: Register = on => {
             ]
           : []),
         ...(browsers.length > 0 ? [heading('Sign-in'), ...browsers.map((row, index) => settingRow(row, index + 1))] : []),
+        ...(connectors.length > 0
+          ? [
+              heading('Connectors'),
+              ...connectors.map(row =>
+                listRow(
+                  `account:${row.name}`,
+                  row.name,
+                  connectorsSummary(row),
+                  () => void forward($, `connectors:${row.name}`, `conn:${row.connectors[0]?.slug}`),
+                  false,
+                ),
+              ),
+            ]
+          : []),
       ]
     }
 

@@ -8,6 +8,15 @@ import { resolvePaths } from '../src/paths.js';
 import { readRotationState } from '../src/rotationState.js';
 import { applySetting, describeSettings } from '../src/settings.js';
 import { usesKeychain } from '../src/credentials.js';
+import { assertLaneServes, ensureLane, expiringLanes, laneDir, laneHeaders } from '../src/lanes.js';
+import { chromeServer, runChromeStarter } from '../src/chromeStarter.js';
+import { confinedTo } from '../src/paths.js';
+import {
+  attachConnector,
+  builtInChromeOn,
+  detachConnector,
+  listConnectors,
+} from '../src/connectors.js';
 import {
   accountsWithExpiry,
   addAccount,
@@ -48,6 +57,16 @@ const HELP = `cc-account - switch the active Claude Code account.
   browser <name> [command...]
                   The browser renew opens for that account, such as a Chrome profile.
                   With no command, show it; --reset returns to a private window.
+  lane <name>     Sign in a second login of that account, which serves its connectors to every
+                  session whichever account is live. Run again to renew it.
+  connectors [name]
+                  The connectors each account can lend, and which are attached. --refresh asks
+                  Anthropic for the account's claude.ai connectors again; --json for the menu.
+  attach <name> <connector>
+                  Give every session that account's connector, as <connector>-<name>
+                  (gmail-work, chrome-work). Signs the lane in first when there is none.
+  detach <name> <connector>
+                  Take it out of every session again.
   check           Warn about logins that expire within ${WARNING_DAYS} days. --hook prints SessionStart JSON;
                   --json prints every alert for the plugin, usage included with cc-pace.
   config          Show the rotation and sign-in settings. --json for the menu.
@@ -84,13 +103,20 @@ function expiryLabel(expiresAt) {
 // `renew` cannot run on macOS, where the login it starts would reach the shared Keychain.
 const canRenew = !usesKeychain();
 
-const expiryNotice = (account) => `'${account.name}' ${expiryLabel(account.expiresAt)}`;
+const expiryNotice = (account) =>
+  `${account.lane ? `The lane of '${account.name}'` : `'${account.name}'`} ${expiryLabel(account.expiresAt)}`;
+
+/** The command that renews a login: a lane's own, or the account's. */
+const renewCommand = (account) => `cc-account ${account.lane ? 'lane' : 'renew'} ${account.name}`;
 
 const expiryWarning = (account) =>
   `${expiryNotice(account)}. ` +
   (canRenew
-    ? `Renew: cc-account renew ${account.name}`
+    ? `Renew: ${renewCommand(account)}`
     : `Sign in as ${account.meta.email} with /login, then: cc-account save ${account.name}`);
+
+/** Every login close to its end: the saved accounts' and the lanes'. */
+const expiringLogins = (activeEmail) => [...expiringAccounts(paths, activeEmail), ...expiringLanes(paths)];
 
 /** Announce the browser a login is about to open. `email` is unset when adding a new account. */
 function announceLogin(browser, email) {
@@ -199,12 +225,19 @@ function renew(target) {
   if (result.active) console.log('It is the live account, so the new login is live too.');
 }
 
+function lane(target) {
+  const result = ensureLane(paths, target, { onLogin: announceLogin });
+  console.log(
+    `${result.renewed ? 'Renewed' : 'Signed in'} the lane of '${target}'  ->  ${result.email}${goodUntil(result.expiresAt)}`,
+  );
+}
+
 /**
  * Name every login close to expiry. In a terminal, offer to renew each one on the spot; anywhere
  * else - a scheduled switch, the slash command - the warning carries the command instead.
  */
 async function offerRenewals(activeEmail) {
-  const due = expiringAccounts(paths, activeEmail);
+  const due = expiringLogins(activeEmail);
   const interactive = canRenew && process.stdin.isTTY && process.stdout.isTTY;
 
   if (!interactive) {
@@ -225,7 +258,8 @@ async function offerRenewals(activeEmail) {
       // The command this follows has already done its work, so a failed renew is reported here
       // rather than thrown, and the exit code stays with the command the user asked for.
       try {
-        renew(account.name);
+        if (account.lane) lane(account.name);
+        else renew(account.name);
       } catch (error) {
         console.error(`! ${error.message}`);
       }
@@ -237,12 +271,12 @@ async function offerRenewals(activeEmail) {
 
 /** SessionStart hook output: a line for the user, and for Claude the way to act on it. */
 function hookOutput(due) {
-  const names = due.map((account) => account.name).join(', ');
+  const names = due.map((account) => (account.lane ? `the lane of ${account.name}` : account.name)).join(', ');
   const action = canRenew
     ? 'ask whether to renew each one now, with the AskUserQuestion tool: one question per login, ' +
       'options "Renew now" and "Later". For each one they accept, run ' +
-      `\`node "${process.argv[1]}" renew <name>\` with a 10-minute timeout: it opens a browser ` +
-      'for the sign-in and waits for it. Report its output.'
+      `\`node "${process.argv[1]}" renew <name>\` (for a lane, \`node "${process.argv[1]}" lane <name>\`) ` +
+      'with a 10-minute timeout: it opens a browser for the sign-in and waits for it. Report its output.'
     : 'explain that each one needs a /login as that account, followed by `cc-account save <name>`.';
   return {
     systemMessage: due.map((account) => `cc-account: ${expiryWarning(account)}`).join('\n'),
@@ -295,8 +329,9 @@ try {
 
   case 'remove': {
     if (!name) die('Usage: cc-account remove <name>');
-    const { email, rotation } = removeAccount(paths, name);
+    const { email, detached, rotation } = removeAccount(paths, name);
     console.log(`Removed '${name}'${email ? `  (${email})` : ''}`);
+    if (detached.length > 0) console.log(`Detached ${detached.join(', ')}. In a running session, run /mcp.`);
     reportRotation(rotation, name);
     break;
   }
@@ -405,6 +440,82 @@ try {
     break;
   }
 
+  case 'lane': {
+    if (!name) die('Usage: cc-account lane <name>');
+    lane(name);
+    break;
+  }
+
+  case 'connectors': {
+    const names = name ? [name] : listAccounts(paths).map((account) => account.name);
+    const all = [];
+    for (const account of names) all.push(await listConnectors(paths, account, { refresh: flags.has('--refresh') }));
+    if (flags.has('--json')) {
+      console.log(JSON.stringify(all));
+      break;
+    }
+    for (const { name: account, lane, connectors } of all) {
+      console.log(`${account}  ${lane ? `lane ${lane.email}${goodUntil(lane.expiresAt)}` : 'no lane yet: cc-account lane ' + account}`);
+      for (const connector of connectors) {
+        const state = connector.attached ? `attached as ${connector.attachedAs}` : connector.needsLogin ? 'needs its own sign-in' : '';
+        console.log(`  ${connector.attached ? '*' : ' '} ${connector.slug.padEnd(24)} ${connector.label}${state ? `  (${state})` : ''}`);
+      }
+    }
+    break;
+  }
+
+  case 'attach': {
+    const [account, wanted] = rest.filter((arg) => !arg.startsWith('--'));
+    if (!account || !wanted) die('Usage: cc-account attach <name> <connector>');
+    const result = await attachConnector(paths, account, wanted, {
+      onLogin: announceLogin,
+      interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    });
+    if (result.signedIn) console.log(`Signed in the lane of '${account}'  ->  ${result.signedIn.email}`);
+    if (!result.attached) {
+      console.log(`${result.connector.label} needs its own sign-in for '${account}', made in a terminal:`);
+      for (const line of result.login) console.log(`  ${line}`);
+      break;
+    }
+    console.log(`Attached '${result.connector.attachedAs}'. New sessions have it; in a running one, run /mcp.`);
+    if (result.connector.kind === 'chrome' && builtInChromeOn(paths)) {
+      console.log("Claude Code's own Claude in Chrome is on too: turn it off from /chrome to keep one browser.");
+    }
+    break;
+  }
+
+  case 'detach': {
+    const [account, wanted] = rest;
+    if (!account || !wanted) die('Usage: cc-account detach <name> <connector>');
+    console.log(`Detached '${detachConnector(paths, account, wanted)}'. In a running session, run /mcp.`);
+    break;
+  }
+
+  case 'chrome': {
+    // Run by Claude Code as an attached Chrome connector: a stdio MCP server on this process's
+    // stdin and stdout, so nothing else may print here.
+    const account = name;
+    if (!account) die('Usage: cc-account chrome <name>');
+    assertLaneServes(paths, account);
+    // Exits once the server has stopped: an open stdin would otherwise keep this process waiting.
+    process.exit(
+      await runChromeStarter({
+        input: process.stdin,
+        output: process.stdout,
+        startServer: chromeServer(confinedTo(laneDir(paths, account)).env),
+        cacheFile: path.join(laneDir(paths, account), 'chrome-tools.json'),
+      }),
+    );
+  }
+
+  case 'header': {
+    // Run by Claude Code as an attached connector's headersHelper: the headers go to stdout as JSON.
+    const [account, server] = rest;
+    if (!account) die('Usage: cc-account header <name> [server]');
+    console.log(JSON.stringify(laneHeaders(paths, account, server)));
+    break;
+  }
+
   case 'browser': {
     // Taken verbatim: a browser command carries flags of its own, such as --profile-directory.
     const [target, ...browser] = rest;
@@ -441,7 +552,7 @@ try {
       break;
     }
     if (!flags.has('--hook')) {
-      const due = expiringAccounts(paths, loggedInEmail(authStatus()));
+      const due = expiringLogins(loggedInEmail(authStatus()));
       if (due.length === 0) console.log(`No login expires within ${WARNING_DAYS} days.`);
       for (const account of due) console.log(`! ${expiryWarning(account)}`);
       break;
@@ -451,7 +562,7 @@ try {
     try {
       const activeEmail = loggedInEmail(authStatus());
       publishLogins(paths, activeEmail);
-      const due = expiringAccounts(paths, activeEmail);
+      const due = expiringLogins(activeEmail);
       if (due.length > 0) console.log(JSON.stringify(hookOutput(due)));
     } catch {
       /* a missing warning costs less than a broken session start */
