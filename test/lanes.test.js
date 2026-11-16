@@ -255,7 +255,7 @@ test('a connector of an account with no lane, or a server with no login, says ho
   ensureLane(paths, 'work');
   assert.throws(
     () => laneHeaders(paths, 'work', 'goematic'),
-    /The lane of 'work' has no login to goematic\. Sign in to it: cc-account attach work goematic/,
+    /The lane of 'work' has no login to goematic\. Sign in to it: cc-account connect goematic-work/,
   );
 });
 

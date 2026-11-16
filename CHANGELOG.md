@@ -4,6 +4,15 @@ Every release since 0.4.0 is also on [GitHub Releases](https://github.com/poison
 and every release on npm as [`cc-account`](https://www.npmjs.com/package/cc-account). The plugin
 carries the same version: `/plugin update cc-account` to get it.
 
+## Unreleased
+
+**Changed**
+
+- A connector is connected by the name every session shows it under:
+  `cc-account connect gmail-work`, or `/cc-account connect gmail-work` in a session, and
+  `disconnect gmail-work` to take it out. `connectors` lists those names. They replace 0.7.0's
+  `attach work gmail` and `detach work gmail`.
+
 ## 0.7.0 - 2026-11-16
 
 **New**

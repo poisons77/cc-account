@@ -93,7 +93,7 @@ Edge and Firefox found installed, opened in a private window. Claude Code starts
 A lane is a Claude Code config directory of its own, `~/.claude-accounts/<name>/lane/`, holding a
 separate browser login of the account. It is never a copy of the snapshot: two copies of one login
 would refresh apart and one would end on a dead token. `lane <name>` signs it in, and signing it in
-again moves its expiry, 30 days out like any other login. The first `attach` for an account signs it
+again moves its expiry, 30 days out like any other login. The first `connect` for an account signs it
 in, through the same private window and email check as `renew`.
 
 What it touches:
@@ -101,11 +101,11 @@ What it touches:
 | What | How |
 |---|---|
 | `<name>/lane/` | Written by Claude Code's own login and token renewal; cc-account never writes a token into it |
-| `<name>/connectors.json` | The account's claude.ai connectors, cached by `connectors --refresh` and `attach` |
-| `~/.claude.json` → `mcpServers` | One user-scope entry per attached connector, named `<connector>-<name>`, written and removed only through `claude mcp add-json` and `claude mcp remove`. Other entries stay untouched |
+| `<name>/connectors.json` | The account's claude.ai connectors, cached by `connectors --refresh` and `connect` |
+| `~/.claude.json` → `mcpServers` | One user-scope entry per connected connector, named `<connector>-<name>`, written and removed only through `claude mcp add-json` and `claude mcp remove`. Other entries stay untouched |
 
-`detach` removes one entry. `remove <name>` detaches every connector of the account and deletes its
-lane along with the snapshot.
+`disconnect` removes one entry. `remove <name>` disconnects every connector of the account and
+deletes its lane along with the snapshot.
 
 A session starts an attached connector by calling `cc-account`: `cc-account header` prints the
 authorization headers of a claude.ai connector or an added server, and `cc-account chrome` starts

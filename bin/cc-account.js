@@ -16,6 +16,7 @@ import {
   builtInChromeOn,
   detachConnector,
   listConnectors,
+  parseConnection,
 } from '../src/connectors.js';
 import {
   accountsWithExpiry,
@@ -62,10 +63,10 @@ const HELP = `cc-account - switch the active Claude Code account.
   connectors [name]
                   The connectors each account can lend, and which are attached. --refresh asks
                   Anthropic for the account's claude.ai connectors again; --json for the menu.
-  attach <name> <connector>
-                  Give every session that account's connector, as <connector>-<name>
-                  (gmail-work, chrome-work). Signs the lane in first when there is none.
-  detach <name> <connector>
+  connect <connector>-<name>
+                  Give every session that account's connector under that name: gmail-work,
+                  chrome-work. Signs the account's lane in first when there is none.
+  disconnect <connector>-<name>
                   Take it out of every session again.
   check           Warn about logins that expire within ${WARNING_DAYS} days. --hook prints SessionStart JSON;
                   --json prints every alert for the plugin, usage included with cc-pace.
@@ -331,7 +332,7 @@ try {
     if (!name) die('Usage: cc-account remove <name>');
     const { email, detached, rotation } = removeAccount(paths, name);
     console.log(`Removed '${name}'${email ? `  (${email})` : ''}`);
-    if (detached.length > 0) console.log(`Detached ${detached.join(', ')}. In a running session, run /mcp.`);
+    if (detached.length > 0) console.log(`Disconnected ${detached.join(', ')}. In a running session, run /mcp.`);
     reportRotation(rotation, name);
     break;
   }
@@ -457,16 +458,16 @@ try {
     for (const { name: account, lane, connectors } of all) {
       console.log(`${account}  ${lane ? `lane ${lane.email}${goodUntil(lane.expiresAt)}` : 'no lane yet: cc-account lane ' + account}`);
       for (const connector of connectors) {
-        const state = connector.attached ? `attached as ${connector.attachedAs}` : connector.needsLogin ? 'needs its own sign-in' : '';
-        console.log(`  ${connector.attached ? '*' : ' '} ${connector.slug.padEnd(24)} ${connector.label}${state ? `  (${state})` : ''}`);
+        const state = connector.attached ? 'connected' : connector.needsLogin ? 'needs its own sign-in' : '';
+        console.log(`  ${connector.attached ? '*' : ' '} ${connector.attachedAs.padEnd(34)} ${connector.label}${state ? `  (${state})` : ''}`);
       }
     }
     break;
   }
 
-  case 'attach': {
-    const [account, wanted] = rest.filter((arg) => !arg.startsWith('--'));
-    if (!account || !wanted) die('Usage: cc-account attach <name> <connector>');
+  case 'connect': {
+    if (!name) die('Usage: cc-account connect <connector>-<name>, as in: cc-account connect gmail-work');
+    const { name: account, wanted } = parseConnection(paths, name);
     const result = await attachConnector(paths, account, wanted, {
       onLogin: announceLogin,
       interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
@@ -477,17 +478,17 @@ try {
       for (const line of result.login) console.log(`  ${line}`);
       break;
     }
-    console.log(`Attached '${result.connector.attachedAs}'. New sessions have it; in a running one, run /mcp.`);
+    console.log(`Connected '${result.connector.attachedAs}'. New sessions have it; in a running one, run /mcp.`);
     if (result.connector.kind === 'chrome' && builtInChromeOn(paths)) {
       console.log("Claude Code's own Claude in Chrome is on too: turn it off from /chrome to keep one browser.");
     }
     break;
   }
 
-  case 'detach': {
-    const [account, wanted] = rest;
-    if (!account || !wanted) die('Usage: cc-account detach <name> <connector>');
-    console.log(`Detached '${detachConnector(paths, account, wanted)}'. In a running session, run /mcp.`);
+  case 'disconnect': {
+    if (!name) die('Usage: cc-account disconnect <connector>-<name>, as in: cc-account disconnect gmail-work');
+    const { name: account, wanted } = parseConnection(paths, name);
+    console.log(`Disconnected '${detachConnector(paths, account, wanted)}'. In a running session, run /mcp.`);
     break;
   }
 

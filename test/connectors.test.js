@@ -1,17 +1,21 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import path from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 
 import { removeAccount, runClaude, saveAccount } from '../src/accounts.js';
-import { attachConnector, detachAll, detachConnector, listConnectors } from '../src/connectors.js';
+import { attachConnector, detachAll, detachConnector, listConnectors, parseConnection } from '../src/connectors.js';
 import { laneDir, laneHeaders, lanePaths } from '../src/lanes.js';
 import { confinedTo } from '../src/paths.js';
 import { login, readJson, sandbox } from './helpers.js';
 
 /** A lane signs in through `claude auth login`, which the sandbox fakes only off macOS. */
 const needsLane = { skip: process.platform === 'darwin' && 'a lane is refused on macOS, as renew is' };
+
+const CLI = fileURLToPath(new URL('../bin/cc-account.js', import.meta.url));
 
 const LISTED = [
   { id: 'mcpsrv_gmail', display_name: 'Gmail' },
@@ -110,6 +114,40 @@ test('a server the account also has on claude.ai is offered once, from claude.ai
   }
 });
 
+test('a connection is read back by the saved account that ends its name', () => {
+  login(paths, 'docs@example.com');
+  saveAccount(paths, 'work-docs');
+
+  assert.deepEqual(parseConnection(paths, 'gmail-work'), { name: 'work', wanted: 'gmail' });
+  assert.deepEqual(parseConnection(paths, 'google-drive-work'), { name: 'work', wanted: 'google-drive' });
+  // The longer account wins where both would end the name.
+  assert.deepEqual(parseConnection(paths, 'gmail-work-docs'), { name: 'work-docs', wanted: 'gmail' });
+  assert.throws(() => parseConnection(paths, 'gmail-nobody'), /gmail-nobody names no saved account\. Write it as <connector>-<account>/);
+  assert.throws(() => parseConnection(paths, '-work'), /names no saved account/);
+});
+
+test('connect and disconnect take the name a session sees', needsLane, async () => {
+  // Not spawnSync: the fake Anthropic list runs in this process and must stay free to answer.
+  const cli = (...args) =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI, ...args], { env: { ...process.env, CC_ACCOUNT_API_BASE: paths.apiBase } });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => (stdout += chunk));
+      child.stderr.on('data', (chunk) => (stderr += chunk));
+      child.on('close', (status) => resolve({ status, stdout, stderr }));
+    });
+
+  const connected = await cli('connect', 'gmail-work');
+  assert.equal(connected.status, 0, connected.stderr);
+  assert.match(connected.stdout, /Connected 'gmail-work'\. New sessions have it/);
+  assert.equal(servers()['gmail-work'].headersHelper, 'cc-account header work');
+
+  const disconnected = await cli('disconnect', 'gmail-work');
+  assert.match(disconnected.stdout, /Disconnected 'gmail-work'/);
+  assert.equal(servers()['gmail-work'], undefined);
+});
+
 test('a connector is named by a part of its name only it has', needsLane, async () => {
   await attachConnector(paths, 'work', 'drive');
   assert.equal(servers()['google-drive-work'].url, 'https://mcp-proxy.anthropic.com/v1/mcp/mcpsrv_drive');
@@ -124,7 +162,7 @@ test('a server added in Claude Code is attached only once the lane has its own s
   assert.equal(first.attached, false);
   // Confined and signed in in one line, so it can never run against the live config.
   assert.match(first.login[0], /CLAUDE_CONFIG_DIR.*claude mcp login goematic/);
-  assert.equal(first.login[1], 'cc-account attach work goematic');
+  assert.equal(first.login[1], 'cc-account connect goematic-work');
   assert.equal(servers()['goematic-work'], undefined);
   // The lane now knows the server, so the sign-in the lines describe can find it.
   assert.equal(readJson(lanePaths(paths, 'work').configJson).mcpServers.goematic.url, 'https://mcp.goematic.example/mcp');

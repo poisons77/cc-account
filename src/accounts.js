@@ -26,7 +26,7 @@ const META = 'meta.json';
  */
 export const RESERVED_NAMES = [
   'rotate', 'current', 'status', 'renew', 'add', 'remove', 'config',
-  'lane', 'connectors', 'attach', 'detach',
+  'lane', 'connectors', 'connect', 'disconnect',
 ];
 
 /** How far ahead of a login's expiry to start asking for a renewal. Claude Code warns at 3 days. */

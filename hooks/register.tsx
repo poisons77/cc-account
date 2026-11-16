@@ -18,10 +18,10 @@ const CLI_MS = 2 * 60 * 1000
 // are RESERVED_NAMES in src/accounts.js, so no account can carry one.
 const SUBCOMMANDS = new Set([
   'rotate', 'current', 'status', 'renew', 'add', 'remove', 'config',
-  'lane', 'connectors', 'attach', 'detach',
+  'lane', 'connectors', 'connect', 'disconnect',
 ])
-// These may wait for a sign-in in the browser; attach does when the account has no lane yet.
-const BROWSER_SUBCOMMANDS = new Set(['renew', 'add', 'lane', 'attach'])
+// These may wait for a sign-in in the browser; connect does when the account has no lane yet.
+const BROWSER_SUBCOMMANDS = new Set(['renew', 'add', 'lane', 'connect'])
 
 // How often each session asks whether a login is ending or every account is out of quota.
 const ALERTS_MS = 60 * 1000
@@ -84,15 +84,15 @@ function connectorsSummary(account: AccountConnectors) {
 
 const TERMINAL_LINES = 'made in a terminal:'
 
-/** Attach or detach one connector through the CLI, then redraw the screen with what it said. */
+/** Connect or disconnect one connector through the CLI, then redraw the screen with what it said. */
 async function toggleConnector($: EngineInterface, account: AccountConnectors, connector: Connector) {
-  const action = connector.attached ? 'detach' : 'attach'
-  const signsIn = action === 'attach' && !account.lane
+  const action = connector.attached ? 'disconnect' : 'connect'
+  const signsIn = action === 'connect' && !account.lane
   if (signsIn) $.ui.toast('A browser window is opening: sign in there to continue.')
-  const result = await cli($, [action, account.name, connector.slug], signsIn ? BROWSER_MS : CLI_MS)
+  const result = await cli($, [action, connector.attachedAs], signsIn ? BROWSER_MS : CLI_MS)
   await loadConnectors($)
   const output = result.stdout.trim()
-  const error = result.exitCode === 0 ? null : result.stderr.trim() || `Could not ${action} ${connector.slug}.`
+  const error = result.exitCode === 0 ? null : result.stderr.trim() || `Could not ${action} ${connector.attachedAs}.`
   const note = error ? null : output.includes(TERMINAL_LINES) ? output : 'Done. Running sessions pick it up with /mcp.'
   await update($, menu, prior => ({ ...prior, error, note }))
   focusOn($, `conn:${connector.slug}`)
@@ -217,7 +217,7 @@ export const register: Register = on => {
       description:
         'Switch the active Claude Code account, rotate to the next one, add, renew or remove a login, change the rotation settings, choose the connectors each account carries, or show which is in use and what each account has left',
       argumentHint:
-        '[rotate | current | status | config | connectors | attach account connector | detach account connector | lane account | add [account-name] | renew account-name | remove account-name | account-name]',
+        '[rotate | current | status | config | connectors | connect connector-account | disconnect connector-account | lane account | add [account-name] | renew account-name | remove account-name | account-name]',
     })
     return started
   })

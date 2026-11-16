@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { accountDir, requireSnapshot, runClaude } from './accounts.js';
+import { accountDir, listAccounts, requireSnapshot, runClaude } from './accounts.js';
 import { accessToken } from './credentials.js';
 import { readJsonOr, writeJsonAtomic } from './jsonFile.js';
 import { ensureLane, laneBlob, laneDir, laneHeaders, lanePaths, laneStatus, refuseUnsafeName } from './lanes.js';
@@ -31,6 +31,23 @@ const slugOf = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replac
 
 /** The server name a connector of `name` is attached under. Claude Code allows letters, digits, `-`, `_`. */
 export const serverName = (slug, name) => `${slug}-${name.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+
+/**
+ * Read a connection the way a session names it, `gmail-cinzia`, back into its connector and account:
+ * the account is the saved one whose name ends it, the longest when two would, so connectors with a
+ * dash of their own (`google-drive-cinzia`) read whole.
+ */
+export function parseConnection(paths, spec) {
+  const names = listAccounts(paths)
+    .map((account) => account.name)
+    .sort((a, b) => b.length - a.length);
+  for (const name of names) {
+    const suffix = serverName('', name);
+    if (spec.length > suffix.length && spec.endsWith(suffix)) return { name, wanted: spec.slice(0, -suffix.length) };
+  }
+  const example = names.at(-1) ?? 'work';
+  throw new Error(`${spec} names no saved account. Write it as <connector>-<account>, as in gmail-${example}.`);
+}
 
 const cacheFile = (paths, name) => path.join(accountDir(paths, name), 'connectors.json');
 
@@ -220,7 +237,7 @@ function laneServerLogin(paths, name, connector, { interactive }) {
   if (known && known.url !== connector.url) {
     throw new Error(
       `${connector.server} has moved to ${connector.url}, but the lane of '${name}' signed in at ` +
-        `${known.url}. Nothing was changed. Remove it from the lane, then attach again: ` +
+        `${known.url}. Nothing was changed. Remove it from the lane, then connect again: ` +
         `${laneCommand(paths, name, `claude mcp remove --scope user ${connector.server}`)}`,
     );
   }
@@ -235,7 +252,7 @@ function laneServerLogin(paths, name, connector, { interactive }) {
     runClaude(['mcp', 'login', connector.server], { stdio: 'inherit', env });
     if (accessToken(laneBlob(paths, name), connector.server)) return null;
   }
-  return [laneCommand(paths, name, `claude mcp login ${connector.server}`), `cc-account attach ${name} ${connector.slug}`];
+  return [laneCommand(paths, name, `claude mcp login ${connector.server}`), `cc-account connect ${serverName(connector.slug, name)}`];
 }
 
 /**
@@ -258,7 +275,7 @@ const attachedServers = (paths, name) =>
 const unregister = (server) => runClaude(['mcp', 'remove', '--scope', 'user', server], { stdio: 'ignore' });
 
 /**
- * Take connector `wanted` of account `name` out of every session, named as `attach` takes it; the
+ * Take connector `wanted` of account `name` out of every session, named as `connect` takes it; the
  * server name removed.
  */
 export function detachConnector(paths, name, wanted) {

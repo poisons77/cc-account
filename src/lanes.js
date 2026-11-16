@@ -276,7 +276,7 @@ export function laneHeaders(paths, name, server, { now = Date.now() } = {}) {
   if (!token) {
     throw new Error(
       server
-        ? `The lane of '${name}' has no login to ${server}. Sign in to it: cc-account attach ${name} ${server}`
+        ? `The lane of '${name}' has no login to ${server}. Sign in to it: cc-account connect ${server}-${name}`
         : `The lane of '${name}' holds no claude.ai token. Sign it in again: cc-account lane ${name}`,
     );
   }

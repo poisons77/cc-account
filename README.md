@@ -55,7 +55,7 @@ Restart the session; the command registers at startup:
 /cc-account add work     sign a new account in through the browser and save it
 /cc-account renew work   sign that account in again through the browser
 /cc-account config       open the settings menu: arrows move, Enter opens, Esc goes back
-/cc-account attach work gmail
+/cc-account connect gmail-work
                          give every session the gmail of work, as gmail-work
 /cc-account connectors   what each account can lend every session, and what is attached
 ```
@@ -69,12 +69,12 @@ Save this as `~/.claude/commands/cc-account.md`:
 
 ````markdown
 ---
-description: Switch the active Claude Code account, rotate to the next one, add or renew a login, attach an account's connectors, or show which is in use
-argument-hint: "[rotate | current | status | connectors | attach account-name connector | detach account-name connector | lane account-name | add [account-name] | renew account-name | account-name]"
+description: Switch the active Claude Code account, rotate to the next one, add or renew a login, connect an account's connectors, or show which is in use
+argument-hint: "[rotate | current | status | connectors | connect connector-account | disconnect connector-account | lane account-name | add [account-name] | renew account-name | account-name]"
 allowed-tools: Bash(cc-account:*)
 ---
 
-Arguments given: `$1` `$2` `$3`
+Arguments given: `$1` `$2`
 
 Run exactly one command, matching the first case that applies, then report its output verbatim:
 
@@ -87,9 +87,9 @@ Run exactly one command, matching the first case that applies, then report its o
 - `$1` is `add`: `cc-account add $2`, with a 10-minute timeout. It opens a private browser window and
   waits for the sign-in, so say a browser window is opening first.
 - `$1` is `connectors`: `cc-account connectors $2`
-- `$1` is `attach`: `cc-account attach $2 $3`, with a 10-minute timeout. The first connector of an
+- `$1` is `connect`: `cc-account connect $2`, with a 10-minute timeout. The first connector of an
   account opens a private browser window for its sign-in, so say one may open first.
-- `$1` is `detach`: `cc-account detach $2 $3`
+- `$1` is `disconnect`: `cc-account disconnect $2`
 - `$1` is `lane`: `cc-account lane $2`, with a 10-minute timeout. It opens a private browser window
   and waits for the sign-in, so say a browser window is opening first.
 - `$1` is anything else, treat it as an account name: `cc-account use $1`
@@ -205,33 +205,35 @@ Each appears in every session as `<connector>-<account>`, such as `gmail-work` o
 account is live. A switch never moves them.
 
 ```console
-$ cc-account attach work gmail
 $ cc-account connectors work
-$ cc-account detach work gmail
+$ cc-account connect gmail-work
+$ cc-account disconnect gmail-work
 ```
 
-The first `attach` for an account signs in a second login of it, its lane, through a private browser
-window. The lane serves that account's connectors and is separate from the snapshot, so `use` and
-`rotate` never touch it. `connectors` lists what each account can lend and marks what is attached;
-`connectors --refresh` asks Anthropic for an account's claude.ai connectors again.
+Or, inside a session: `/cc-account connect gmail-work`. The name is the one the session then shows.
 
-New sessions have an attached connector at once. In a running session, run `/mcp`.
+The first connector of an account signs in a second login of it, its lane, through a private
+browser window. The lane serves that account's connectors and is separate from the snapshot, so `use`
+and `rotate` never touch it. `connectors` lists each name an account can lend and marks what is
+connected; `connectors --refresh` asks Anthropic for an account's claude.ai connectors again.
+
+New sessions have a connector at once. In a running session, run `/mcp`.
 
 The plugin's `/cc-account config` has a Connectors screen per account, with a tick beside each
-attached connector; Enter attaches or detaches it.
+connected one; Enter connects or disconnects it.
 
 A lane login lasts 30 days, like any other, and is named in the same warnings three days ahead and in
 the red band for its last hour. `cc-account lane work` signs it in again.
 
 - Connectors call `cc-account` by name, so they need the npm install (`npm install -g cc-account`);
   the plugin alone is not enough.
-- A server added in Claude Code needs its own sign-in once per account, made in a terminal. `attach`
-  prints the lines to run when it cannot do it itself.
+- A server added in Claude Code needs its own sign-in once per account, made in a terminal. `connect`
+  makes it there when run in one, and otherwise prints the lines to run.
 - Claude in Chrome starts its browser server when a session first uses it, so an idle session holds
   only a small process.
 - The live account's own connectors stay, so its mailbox can appear twice: once as itself, once as
   `gmail-<account>`.
-- Once `chrome-<account>` is attached, turn Claude Code's built-in Claude in Chrome off from `/chrome`
+- Once `chrome-<account>` is connected, turn Claude Code's built-in Claude in Chrome off from `/chrome`
   to keep one browser.
 
 What a lane stores and the one request it makes: [`docs/account-storage.md`](docs/account-storage.md).
@@ -252,13 +254,13 @@ What a lane stores and the one request it makes: [`docs/account-storage.md`](doc
 | `browser <name> [command]` | Set the browser `renew` opens for that account; no command shows it, `--reset` returns to a private window. |
 | `lane <name>` | Sign in the lane of that account, a second login that serves its connectors; run again to renew it. |
 | `connectors [name]` | List what each account can lend and what is attached. `--refresh` asks Anthropic for the claude.ai connectors again; `--json` for the menu. |
-| `attach <name> <connector>` | Give every session that account's connector, as `<connector>-<name>`. Signs the lane in first when there is none. |
-| `detach <name> <connector>` | Take it out of every session again. |
+| `connect <connector>-<name>` | Give every session that account's connector under that name, such as `gmail-work`. Signs the lane in first when there is none. |
+| `disconnect <connector>-<name>` | Take it out of every session again. |
 | `check` | Name the logins that expire within three days. `--hook` prints it as SessionStart hook output; `--json` prints every alert the plugin draws. |
 | `config` | Show the rotation, notice and sign-in settings. `config set <key> <value>` changes one; the plugin's `/cc-account config` is the same list as a menu. |
 | `--creds-only` | Swap tokens only, leaving `oauthAccount` untouched. |
 
-`rotate`, `current`, `status`, `renew`, `add`, `remove`, `config`, `lane`, `connectors`, `attach` and `detach` cannot be used as account names. `save` refuses them, so the
+`rotate`, `current`, `status`, `renew`, `add`, `remove`, `config`, `lane`, `connectors`, `connect` and `disconnect` cannot be used as account names. `save` refuses them, so the
 `/cc-account` slash command can treat them as subcommands without ever hiding an account.
 
 `save` also refuses a name whose snapshot already holds a different email, so one account's token
