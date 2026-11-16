@@ -4,6 +4,16 @@ Every release since 0.4.0 is also on [GitHub Releases](https://github.com/poison
 and every release on npm as [`cc-account`](https://www.npmjs.com/package/cc-account). The plugin
 carries the same version: `/plugin update cc-account` to get it.
 
+## Unreleased
+
+**New**
+
+- With the plugin, every session that starts or resumes is told the connectors it has from your
+  other accounts, by name, and to browse through `chrome-<account>`.
+- With the plugin, a session that reaches for Claude Code's own Claude in Chrome while a
+  `chrome-<account>` connector is connected is sent to the same tool there, so the browser works
+  whichever account is live.
+
 ## 0.7.1 - 2026-11-16
 
 **Changed**

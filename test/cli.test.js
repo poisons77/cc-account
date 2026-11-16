@@ -32,6 +32,44 @@ afterEach(() => {
 // Piped, not a terminal: the CLI must warn without prompting.
 const run = (...args) => execFileSync(process.execPath, [bin, ...args], { encoding: 'utf8' });
 
+/** Claude Code's user-scope servers as cc-account connects them, beside one of the user's own. */
+function connectServers() {
+  const config = JSON.parse(fs.readFileSync(box.paths.configJson, 'utf8'));
+  config.mcpServers = {
+    'chrome-work': { type: 'stdio', command: 'cmd', args: ['/c', 'cc-account', 'chrome', 'work'] },
+    'gmail-personal': { type: 'http', url: 'https://proxy.example/x', headersHelper: 'cc-account header personal' },
+    mine: { type: 'http', url: 'https://mine.example/mcp' },
+  };
+  fs.writeFileSync(box.paths.configJson, JSON.stringify(config));
+}
+
+const hookRun = (input, ...args) => execFileSync(process.execPath, [bin, ...args], { encoding: 'utf8', input });
+
+test('a starting session is told its connectors, and to browse through chrome-<account>', needsFileBackend, () => {
+  login(box.paths, 'work@example.com');
+  assert.equal(hookRun('{}', 'connectors', '--hook'), '', 'silent with none connected');
+
+  connectServers();
+  const output = JSON.parse(hookRun('{}', 'connectors', '--hook'));
+
+  assert.equal(output.hookSpecificOutput.hookEventName, 'SessionStart');
+  assert.match(output.hookSpecificOutput.additionalContext, /: chrome-work, gmail-personal\./);
+  assert.match(output.hookSpecificOutput.additionalContext, /use the chrome-work tools \(mcp__chrome-work__\*\), not claude-in-chrome/);
+  assert.doesNotMatch(output.hookSpecificOutput.additionalContext, /mine/);
+});
+
+test('a call to the built-in Claude in Chrome is sent to the same tool on chrome-<account>', needsFileBackend, () => {
+  login(box.paths, 'work@example.com');
+  const call = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'mcp__claude-in-chrome__navigate' });
+  assert.equal(hookRun(call, 'connectors', '--redirect'), '', 'let through with no chrome connector');
+
+  connectServers();
+  const output = JSON.parse(hookRun(call, 'connectors', '--redirect'));
+
+  assert.equal(output.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(output.hookSpecificOutput.permissionDecisionReason, /^Use mcp__chrome-work__navigate instead/);
+});
+
 test('check --hook is silent while no login is close to expiry', needsFileBackend, () => {
   login(box.paths, 'work@example.com', expiringIn(20 * DAY_MS));
   saveAccount(box.paths, 'work');

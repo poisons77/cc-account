@@ -8,7 +8,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 
 import { removeAccount, runClaude, saveAccount } from '../src/accounts.js';
 import { attachConnector, detachAll, detachConnector, listConnectors, parseConnection } from '../src/connectors.js';
-import { laneDir, laneHeaders, lanePaths } from '../src/lanes.js';
+import { ensureLane, laneDir, laneHeaders, lanePaths } from '../src/lanes.js';
 import { confinedTo } from '../src/paths.js';
 import { login, readJson, sandbox } from './helpers.js';
 
@@ -127,6 +127,9 @@ test('a connection is read back by the saved account that ends its name', () => 
 });
 
 test('connect and disconnect take the name a session sees', needsLane, async () => {
+  // Signed in here, where the sandbox has no browser: the CLI process below would find the real
+  // one and open the fake sign-in page in it.
+  ensureLane(paths, 'work');
   // Not spawnSync: the fake Anthropic list runs in this process and must stay free to answer.
   const cli = (...args) =>
     new Promise((resolve) => {

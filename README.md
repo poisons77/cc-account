@@ -234,7 +234,9 @@ the red band for its last hour. `cc-account lane work` signs it in again.
 - The live account's own connectors stay, so its mailbox can appear twice: once as itself, once as
   `gmail-<account>`.
 - Once `chrome-<account>` is connected, turn Claude Code's built-in Claude in Chrome off from `/chrome`
-  to keep one browser.
+  to keep one browser. With the plugin, a session that still reaches for the built-in one is sent to
+  the same tool on `chrome-<account>`.
+- With the plugin, every session that starts or resumes is told its connectors by name.
 
 What a lane stores and the one request it makes: [`docs/account-storage.md`](docs/account-storage.md).
 

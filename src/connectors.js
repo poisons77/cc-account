@@ -298,5 +298,18 @@ export function detachAll(paths, name) {
   return servers;
 }
 
+/** Every connector cc-account connected, by server name: `{ 'gmail-work': 'work', ... }`. Reads one file. */
+export const connectedServers = (paths) =>
+  Object.fromEntries(
+    Object.entries(userServers(paths)).flatMap(([server, entry]) => {
+      const name = attachedFor(entry);
+      return name ? [[server, name]] : [];
+    }),
+  );
+
+/** The connected Chrome connectors, by server name; the first is the one a session should use. */
+export const connectedChrome = (paths) =>
+  Object.keys(connectedServers(paths)).filter((server) => server.startsWith('chrome-'));
+
 /** Whether Claude Code's own Claude in Chrome is on, which a session would see beside chrome-<account>. */
 export const builtInChromeOn = (paths) => readJsonOr(paths.configJson, {})?.claudeInChromeDefaultEnabled === true;

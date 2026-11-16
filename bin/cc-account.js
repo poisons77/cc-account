@@ -14,6 +14,8 @@ import { confinedTo } from '../src/paths.js';
 import {
   attachConnector,
   builtInChromeOn,
+  connectedChrome,
+  connectedServers,
   detachConnector,
   listConnectors,
   parseConnection,
@@ -290,6 +292,57 @@ function hookOutput(due) {
   };
 }
 
+const readStdin = async () => {
+  let text = '';
+  for await (const chunk of process.stdin) text += chunk;
+  return text;
+};
+
+/**
+ * What a starting session is told about the connectors cc-account connected, so it knows them by
+ * name and uses them before Claude Code's own Claude in Chrome; null when none are connected.
+ */
+function connectorsContext() {
+  const servers = Object.keys(connectedServers(paths)).sort();
+  if (servers.length === 0) return null;
+  const [chrome] = connectedChrome(paths);
+  const browser = chrome
+    ? ` For any browser work use the ${chrome} tools (mcp__${chrome}__*), not claude-in-chrome: ` +
+      `${chrome} reaches the user's Chrome whichever Claude account is live, and the built-in one may not.`
+    : '';
+  return (
+    `cc-account connected these MCP servers from the user's other Claude accounts; each name ends ` +
+    `with the account it belongs to: ${servers.join(', ')}.${browser} If their tools are missing, ` +
+    'the user can load them with /mcp.'
+  );
+}
+
+/**
+ * The PreToolUse answer to a call of Claude Code's own Claude in Chrome while a chrome-<account>
+ * connector is connected: refused, naming the same tool there. Null lets the call through.
+ */
+function chromeRedirect(input) {
+  const [chrome] = connectedChrome(paths);
+  if (!chrome) return null;
+  let tool = '';
+  try {
+    tool = JSON.parse(input).tool_name ?? '';
+  } catch {
+    /* no hook input: still redirect, without the tool's own name */
+  }
+  const same = tool.startsWith('mcp__claude-in-chrome__') ? tool.replace('mcp__claude-in-chrome__', `mcp__${chrome}__`) : `mcp__${chrome}__*`;
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason:
+        `Use ${same} instead: ${chrome} reaches the user's Chrome whichever Claude account is live, ` +
+        "while Claude Code's own Claude in Chrome connects only for the account its extension is " +
+        `signed in to. If ${chrome} tools are not loaded, find them with ToolSearch, or ask the user to run /mcp.`,
+    },
+  };
+}
+
 async function switchTo(target) {
   const result = useAccount(paths, target, { credsOnly: flags.has('--creds-only') });
 
@@ -448,6 +501,17 @@ try {
   }
 
   case 'connectors': {
+    // The plugin's hooks: they read one file and start nothing, as every session runs them.
+    if (flags.has('--hook')) {
+      const context = connectorsContext();
+      if (context) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context } }));
+      break;
+    }
+    if (flags.has('--redirect')) {
+      const redirect = chromeRedirect(await readStdin());
+      if (redirect) console.log(JSON.stringify(redirect));
+      break;
+    }
     const names = name ? [name] : listAccounts(paths).map((account) => account.name);
     const all = [];
     for (const account of names) all.push(await listConnectors(paths, account, { refresh: flags.has('--refresh') }));
