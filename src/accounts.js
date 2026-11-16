@@ -75,7 +75,13 @@ function windowsArg(arg, quoted) {
 export function runClaude(args, options) {
   if (process.platform !== 'win32') return spawnSync('claude', args, options);
   const quoted = args.some((arg) => arg.includes('"'));
-  return spawnSync(['claude', ...args].map((arg) => windowsArg(arg, quoted)).join(' '), { ...options, shell: true });
+  // Hidden: run from a process with no console of its own (a headers helper, the background
+  // renewer), the shell would otherwise flash a window of its own every time.
+  return spawnSync(['claude', ...args].map((arg) => windowsArg(arg, quoted)).join(' '), {
+    windowsHide: true,
+    ...options,
+    shell: true,
+  });
 }
 
 /**
