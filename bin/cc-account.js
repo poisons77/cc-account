@@ -165,8 +165,9 @@ function readingLabel(seen, now) {
   const windows = Object.entries(seen?.buckets ?? {});
   if (windows.length === 0) return 'no reading yet';
   const parts = windows.map(([key, { used, resets }]) => {
-    const reset = resets > now ? `resets ${when(resets)}` : `reset ${when(resets)}, full again`;
-    return `${WINDOW_NAMES[key] ?? key} ${Math.round(used)}%, ${reset}`;
+    const window = WINDOW_NAMES[key] ?? key;
+    if (resets <= now) return `${window} 0%, full again since ${when(resets)}`;
+    return `${window} ${Math.round(used)}%, resets ${when(resets)}`;
   });
   return `${parts.join('; ')}  (read ${ago(now - seen.at)})`;
 }

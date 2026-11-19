@@ -4,6 +4,13 @@ Every release since 0.4.0 is also on [GitHub Releases](https://github.com/poison
 and every release on npm as [`cc-account`](https://www.npmjs.com/package/cc-account). The plugin
 carries the same version: `/plugin update cc-account` to get it.
 
+## Unreleased
+
+**Changed**
+
+- `status` shows a window whose reset has passed as `0%, full again since <time>`, rather than the
+  use read before the reset.
+
 ## 0.8.0 - 2026-11-16
 
 **New**

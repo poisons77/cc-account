@@ -128,9 +128,9 @@ test('status shows what cc-pace last saved of each account, and whether rotation
   const output = execFileSync(process.execPath, [bin, 'status'], { encoding: 'utf8', env: { ...process.env, TZ: 'UTC' } });
   // Directory order is the filesystem's, so compare the lines as a set.
   assert.deepEqual(output.trimEnd().split(/\r?\n/).sort(), [
-    '  personal  weekly 95%, reset Tue 14 Nov 22:13, full again  (read 2d ago)  usable',
+    '  personal  weekly 0%, full again since Tue 14 Nov 22:13  (read 2d ago)  usable',
     '  spare     no reading yet',
-    '* work      5-hour 40%, reset Tue 14 Nov 22:13, full again; weekly 97%, resets Fri 1 Jan 00:00  (read 3h ago)  spent',
+    '* work      5-hour 0%, full again since Tue 14 Nov 22:13; weekly 97%, resets Fri 1 Jan 00:00  (read 3h ago)  spent',
   ].sort());
 });
 
