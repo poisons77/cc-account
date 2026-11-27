@@ -63,8 +63,9 @@ if (command === 'auth' && subcommand === 'login') {
 
 if (command === 'mcp' && (subcommand === 'get' || subcommand === 'list')) {
   // Connecting servers renews whatever has expired, as the real one does: the claude.ai login and
-  // each server's own login get new tokens. FAKE_RENEW_LOG counts renewals, one line each, and
-  // FAKE_RENEW_MS stretches one so two can overlap.
+  // each server's own login get new tokens. FAKE_RENEW_LOG counts renewals, one line each,
+  // FAKE_RENEW_MS stretches one so two can overlap, and FAKE_LINGER_MS keeps it running after the
+  // tokens are saved, as the real one does while it connects the servers.
   const started = Date.now();
   const blob = readJson(credentialsFile);
   const stamp = `${process.pid}-${started}`;
@@ -78,6 +79,7 @@ if (command === 'mcp' && (subcommand === 'get' || subcommand === 'list')) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
   fs.writeFileSync(credentialsFile, JSON.stringify(blob));
   if (process.env.FAKE_RENEW_LOG) fs.appendFileSync(process.env.FAKE_RENEW_LOG, `${args.slice(1).join(' ')}\n`);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_LINGER_MS) || 0);
   process.exit(0);
 }
 

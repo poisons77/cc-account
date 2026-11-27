@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -148,7 +148,7 @@ test('a fresh token is handed out at once, with the session id the proxy require
   assert.deepEqual(renewals(), []);
 });
 
-test('an expired token is renewed before it is handed out', needsLane, () => {
+test('an expired token is renewed before it is handed out', needsLane, async () => {
   ensureLane(paths, 'work');
   laneTokens(-MINUTE_MS);
   process.env.FAKE_RENEW_LOG = path.join(box.root, 'renewals.log');
@@ -156,8 +156,46 @@ test('an expired token is renewed before it is handed out', needsLane, () => {
   const headers = laneHeaders(paths, 'work', 'goematic');
 
   assert.match(headers.Authorization, /^Bearer renewed-/);
+  const lock = path.join(laneDir(paths, 'work'), '.renew.lock');
+  for (let waited = 0; fs.existsSync(lock) && waited < 15_000; waited += 100) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
   assert.deepEqual(renewals(), ['get goematic']);
-  assert.equal(fs.existsSync(path.join(laneDir(paths, 'work'), '.renew.lock')), false);
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test('the new token is handed out once saved, while the renewal goes on past the 10 s helper limit', needsLane, async () => {
+  ensureLane(paths, 'work');
+  laneTokens(-MINUTE_MS);
+  process.env.FAKE_LINGER_MS = '12000';
+
+  const started = Date.now();
+  const result = await header('work');
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(JSON.parse(result.stdout).Authorization, /^Bearer renewed-/);
+  assert.ok(Date.now() - started < 9000, `answered in ${Date.now() - started} ms`);
+});
+
+test('the minute poll renews a connected lane token due within half an hour, and no other', needsLane, async () => {
+  ensureLane(paths, 'work');
+  laneTokens(10 * MINUTE_MS);
+  process.env.FAKE_RENEW_LOG = path.join(box.root, 'renewals.log');
+  const config = readJson(paths.configJson);
+  config.mcpServers = { 'goematic-work': { type: 'http', url: 'https://x.example/mcp', headersHelper: 'cc-account header work goematic' } };
+  fs.writeFileSync(paths.configJson, JSON.stringify(config));
+
+  execFileSync(process.execPath, [CLI, 'check', '--json'], { env: process.env });
+  for (let waited = 0; renewals().length === 0 && waited < 15_000; waited += 100) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.deepEqual(renewals(), ['get goematic']);
+
+  fs.rmSync(path.join(laneDir(paths, 'work'), '.renew-tried'));
+  laneTokens(2 * 60 * MINUTE_MS);
+  execFileSync(process.execPath, [CLI, 'check', '--json'], { env: process.env });
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.deepEqual(renewals(), ['get goematic'], 'a token with two hours left is left alone');
 });
 
 test('a token in its last half hour is handed out at once and renewed in the background', needsLane, async () => {

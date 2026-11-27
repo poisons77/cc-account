@@ -44,6 +44,7 @@ export function sandbox() {
     FAKE_RENEWED_EXPIRY: process.env.FAKE_RENEWED_EXPIRY,
     FAKE_RENEW_LOG: process.env.FAKE_RENEW_LOG,
     FAKE_RENEW_MS: process.env.FAKE_RENEW_MS,
+    FAKE_LINGER_MS: process.env.FAKE_LINGER_MS,
     CC_ACCOUNT_API_BASE: process.env.CC_ACCOUNT_API_BASE,
   };
 

@@ -8,7 +8,7 @@ import { resolvePaths } from '../src/paths.js';
 import { readRotationState } from '../src/rotationState.js';
 import { applySetting, describeSettings } from '../src/settings.js';
 import { usesKeychain } from '../src/credentials.js';
-import { assertLaneServes, ensureLane, expiringLanes, laneDir, laneHeaders } from '../src/lanes.js';
+import { assertLaneServes, ensureLane, expiringLanes, laneDir, laneHeaders, renewAhead } from '../src/lanes.js';
 import { chromeServer, runChromeStarter } from '../src/chromeStarter.js';
 import { confinedTo } from '../src/paths.js';
 import {
@@ -17,6 +17,7 @@ import {
   connectedChrome,
   connectedServers,
   detachConnector,
+  laneTokens,
   listConnectors,
   parseConnection,
 } from '../src/connectors.js';
@@ -604,7 +605,9 @@ try {
 
   case 'check': {
     if (flags.has('--json')) {
-      // The plugin polls this every minute in every session, so it starts no `claude` process.
+      // The plugin polls this every minute in every session, so it starts no `claude` process of
+      // its own: a lane token due for renewal is renewed by a detached process, a few times a day.
+      for (const { name: account, server } of laneTokens(paths)) renewAhead(paths, account, server);
       const state = alerts(paths);
       console.log(
         JSON.stringify({

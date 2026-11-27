@@ -4,6 +4,15 @@ Every release since 0.4.0 is also on [GitHub Releases](https://github.com/poison
 and every release on npm as [`cc-account`](https://www.npmjs.com/package/cc-account). The plugin
 carries the same version: `/plugin update cc-account` to get it.
 
+## Unreleased
+
+**Fixed**
+
+- A connector whose login ran out while a session sat idle no longer turns into "needs sign-in":
+  with the plugin, every open session renews connector logins in the background in their last half
+  hour, and a login renewed on the spot is handed to the session the moment it is saved, inside
+  Claude Code's 10-second limit.
+
 ## 0.8.1 - 2026-11-24
 
 **Changed**

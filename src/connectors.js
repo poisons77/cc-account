@@ -307,6 +307,23 @@ export const connectedServers = (paths) =>
     }),
   );
 
+/**
+ * Each lane token the connected connectors are handed, once: `{ name, server }`, with `server`
+ * null for the claude.ai login. Reads one file.
+ */
+export function laneTokens(paths) {
+  const keys = new Set(
+    Object.values(userServers(paths)).flatMap((entry) => {
+      const helper = /^cc-account header (\S+)(?: (\S+))?$/.exec(entry?.headersHelper ?? '');
+      return helper ? [`${helper[1]} ${helper[2] ?? ''}`] : [];
+    }),
+  );
+  return [...keys].map((key) => {
+    const [name, server] = key.split(' ');
+    return { name, server: server || null };
+  });
+}
+
 /** The connected Chrome connectors, by server name; the first is the one a session should use. */
 export const connectedChrome = (paths) =>
   Object.keys(connectedServers(paths)).filter((server) => server.startsWith('chrome-'));

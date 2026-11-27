@@ -168,9 +168,11 @@ export function ensureLane(paths, name, { onLogin = () => {} } = {}) {
 
 /**
  * Token renewal. Claude Code renews a lane's tokens itself whenever it connects the lane's servers,
- * so cc-account only starts that and never writes a token. A renewal takes about 6 s and Claude Code
- * gives a headers helper 10 s, so a token is renewed in the background from half an hour before
- * its end, and inline only in its last minutes; a helper killed past its 10 s is simply run again.
+ * so cc-account only starts that and never writes a token. A renewal runs in a process of its own,
+ * started from half an hour before a token's end by every session's minute poll and by `header`.
+ * Claude Code gives a headers helper 10 s, and a helper that overruns it leaves the connector
+ * asking for a sign-in, so `header` with a token in its last minutes waits only for the new token
+ * to be saved (about 6 s in), never for the renewal process to end.
  */
 const RENEW_AHEAD_MS = 30 * 60 * 1000;
 const RENEW_NOW_MS = 5 * 60 * 1000;
@@ -180,8 +182,9 @@ const RETRY_AFTER_MS = 5 * 60 * 1000;
 // One renewal per lane at a time, so sessions starting together do not each spend 6 s on it. A
 // renewal is never killed, so only a lock far older than any renewal is one a crash left.
 const LOCK_STALE_MS = 10 * 60 * 1000;
-const LOCK_WAIT_MS = 8 * 1000;
-const LOCK_POLL_MS = 200;
+// What `header` may spend waiting for a new token, inside the helper's 10 s with Node's start.
+const ANSWER_WITHIN_MS = 8 * 1000;
+const POLL_MS = 200;
 const RENEWER = fileURLToPath(new URL('./renewLane.js', import.meta.url));
 
 const lockFile = (paths, name) => path.join(laneDir(paths, name), '.renew.lock');
@@ -222,19 +225,14 @@ function takeLock(file) {
 
 /**
  * Have Claude Code renew the lane's tokens: by connecting `server` when given, else every server of
- * the lane, which renews the claude.ai login with them. When another renewal is running, `wait`
- * waits for it instead of starting a second one. True when this call ran the renewal.
+ * the lane, which renews the claude.ai login with them. Nothing when another renewal of the lane is
+ * running. True when this call ran the renewal.
  */
-export function renewLane(paths, name, server, { wait = true } = {}) {
+export function renewLane(paths, name, server) {
   // A sign-in in progress writes the same files; a renewal then could undo it.
   if (fs.existsSync(signingInFile(paths, name))) return false;
   const file = lockFile(paths, name);
-  if (!takeLock(file)) {
-    for (let waited = 0; wait && fs.existsSync(file) && waited < LOCK_WAIT_MS; waited += LOCK_POLL_MS) {
-      sleep(LOCK_POLL_MS);
-    }
-    return false;
-  }
+  if (!takeLock(file)) return false;
   try {
     // Never killed: one stopped halfway could leave the lane on a refresh token already replaced.
     runClaude(server ? ['mcp', 'get', server] : ['mcp', 'list'], {
@@ -247,19 +245,53 @@ export function renewLane(paths, name, server, { wait = true } = {}) {
   return true;
 }
 
-function renewInBackground(paths, name, server) {
-  const tried = triedFile(paths, name);
-  try {
-    if (Date.now() - fs.statSync(tried).mtimeMs < RETRY_AFTER_MS) return;
-  } catch {
-    /* never tried */
-  }
-  writeFileAtomic(tried, '');
+/** Start a renewal in a process of its own, which outlives this one and is never killed. */
+function startRenewal(paths, name, server) {
+  writeFileAtomic(triedFile(paths, name), '');
   spawn(process.execPath, [RENEWER, name, ...(server ? [server] : [])], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
   }).unref();
+}
+
+function renewInBackground(paths, name, server) {
+  try {
+    if (Date.now() - fs.statSync(triedFile(paths, name)).mtimeMs < RETRY_AFTER_MS) return;
+  } catch {
+    /* never tried */
+  }
+  startRenewal(paths, name, server);
+}
+
+/**
+ * Renew a token in its last minutes and hand out the new one the moment it is saved. The renewal
+ * process goes on connecting servers well after that, which is what made a helper overrun its 10 s.
+ * Past the wait, the old token: the server rejects it and Claude Code asks once more.
+ */
+function renewedToken(paths, name, server, stale) {
+  startRenewal(paths, name, server);
+  const read = () => accessToken(laneBlob(paths, name), server);
+  for (const deadline = Date.now() + ANSWER_WITHIN_MS; Date.now() < deadline; sleep(POLL_MS)) {
+    const token = read();
+    if (token && token.token !== stale.token) return token;
+  }
+  return read() ?? stale;
+}
+
+/**
+ * Start renewing, in the background, the token `server` (the claude.ai login when null) of the
+ * lane of `name` when it ends within half an hour or has ended. Run by every session's minute poll,
+ * so an open session finds its connectors' tokens fresh however long it sat idle. Never throws.
+ */
+export function renewAhead(paths, name, server, now = Date.now()) {
+  try {
+    assertLaneServes(paths, name);
+    const token = accessToken(laneBlob(paths, name), server);
+    if (token?.expiresAt != null && token.expiresAt - now < RENEW_AHEAD_MS) renewInBackground(paths, name, server);
+  } catch {
+    /* a lane that cannot serve is reported by `header` and the expiry warnings */
+  }
 }
 
 /**
@@ -271,8 +303,7 @@ function renewInBackground(paths, name, server) {
 export function laneHeaders(paths, name, server, { now = Date.now() } = {}) {
   assertLaneServes(paths, name);
 
-  const read = () => accessToken(laneBlob(paths, name), server);
-  let token = read();
+  let token = accessToken(laneBlob(paths, name), server);
   if (!token) {
     throw new Error(
       server
@@ -283,8 +314,7 @@ export function laneHeaders(paths, name, server, { now = Date.now() } = {}) {
 
   const left = token.expiresAt === null ? Infinity : token.expiresAt - now;
   if (left < RENEW_NOW_MS) {
-    renewLane(paths, name, server);
-    token = read() ?? token;
+    token = renewedToken(paths, name, server, token);
   } else if (left < RENEW_AHEAD_MS) {
     renewInBackground(paths, name, server);
   }
